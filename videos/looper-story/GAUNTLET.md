@@ -1,0 +1,10 @@
+# Gauntlet ledger
+
+These are the independent critic rounds (motion-video-kit `references/gauntlet.md`). The builder never
+grades its own work: each round goes to a fresh critic that sees only the render, the brief and the bar.
+
+| Round | Artifact | Critic's top findings | Changes made | Measured |
+|---|---|---|---|---|
+| Storyboard | `BRIEF.md` v1 | All Is Lost read as Looper failing. The re-check was unclear. The crisis had no cost. There was no dramatization label, the laps implied a speed-up, some beats were filler, and the CTA was weak. | All Is Lost became a correct stop on a question. The crisis now carries the cost "3 client apps break". The label stays on screen for the whole film, the laps have a constant length, and looper.fyi is the largest element on the end card. | — |
+| Pre-critic self-check | the first 60 fps cut | (measurement only) | Every beat was retimed onto the music's beat grid (76 BPM). The terminal type got larger. Added a ring comet, typing reveals, a background drift and pushes. | Frozen time went from 14.6 s to 6.6 s (2.7 s of that is the CTA hold). Loudness −16.1 LUFS, true peak −1.1 dBFS. |
+| Film 1 | `looper-done-means-done.mp4` r1 | The Finale had no hero beat. Transitions were crossfades. The pill went green and collided with text. Looper wasn't named until 44 s. Bubbles overlapped and clipped. The orb covered station labels. All Is Lost was static. The reply landed in an invisible terminal. The music died under the CTA. | The fail line now grows into "14 failed". The wall collapses into the counter, which docks into the terminal. The red pill collapses into the ring's start point. "Looper" is named at 15 s. The bubbles sit on a 3×8 grid. The ring's green 0 carries into a tile, and the tiles shrink into the question's chips. The ring goes dark segment by segment on the beat. "It needs you." rises out as the phone enters. The terminal is present before the reply flies in. The Finale has an "All checks pass." hero tile beat with a ring flash. The terminal and ring close into the end-card orb. The ring-out is lifted +8 dB and the true-peak ceiling is −2 dBFS. | see round 2 |

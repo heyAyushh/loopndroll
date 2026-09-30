@@ -1,0 +1,12 @@
+{
+  "name": "looper-story-film",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "stills": "node capture.mjs stills",
+    "frames": "node capture.mjs frames"
+  },
+  "dependencies": {
+    "playwright-core": "1.63.0"
+  }
+}

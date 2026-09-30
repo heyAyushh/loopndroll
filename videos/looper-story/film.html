@@ -1,0 +1,908 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Looper: Done means done</title>
+<style>
+  :root {
+    --paper: oklch(12.5% 0.009 268);
+    --surface: oklch(18% 0.011 268);
+    --ink: oklch(95% 0.006 270);
+    --muted: oklch(70% 0.01 270);
+    --rule: oklch(30% 0.01 270);
+    --accent: oklch(76% 0.14 292);
+    --accent-ink: oklch(14% 0.012 292);
+    --fail: oklch(68% 0.19 25);
+    --pass: oklch(80% 0.16 152);
+    --mono: "SF Mono", ui-monospace, Menlo, monospace;
+    --display: -apple-system, "SF Pro Display", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; background: #000; }
+  #stage { position: relative; width: 1920px; height: 1080px; overflow: hidden; font-family: var(--display); color: var(--ink); }
+  #bg { position: absolute; inset: 0; }
+  #cam { position: absolute; inset: 0; transform-origin: 960px 540px; }
+  .abs { position: absolute; left: 0; top: 0; will-change: transform, opacity; }
+
+  /* Terminal: the persistent session window. */
+  #terminal { width: 1380px; height: 660px; border-radius: 22px; background: oklch(15.5% 0.01 268 / 0.96);
+    border: 1px solid oklch(34% 0.014 270); box-shadow: 0 60px 140px oklch(0% 0 0 / 0.55), inset 0 1px 0 oklch(100% 0 0 / 0.06); overflow: hidden; }
+  #terminal .bar { height: 58px; display: flex; align-items: center; gap: 12px; padding: 0 24px; border-bottom: 1px solid oklch(26% 0.01 270); }
+  #terminal .dot { width: 14px; height: 14px; border-radius: 50%; background: oklch(38% 0.01 270); }
+  #terminal .title { flex: 1; text-align: center; font: 500 20px var(--display); color: var(--muted); margin-right: 80px; }
+  #terminal .title b { color: var(--ink); font-weight: 600; }
+  #term-body { position: absolute; left: 48px; right: 48px; top: 100px; font: 400 36px/60px var(--mono); }
+  .line { white-space: pre; height: 60px; }
+  .you { color: var(--ink); }
+  .you .chev { color: var(--accent); }
+  .work { color: var(--muted); }
+  .work .bul { color: oklch(62% 0.08 292); }
+  .ok { color: var(--pass); }
+  .bad { color: var(--fail); }
+  .dim { color: oklch(52% 0.01 270); }
+  #term-input { position: absolute; left: 0; right: 0; bottom: 0; height: 96px; border-top: 1px solid oklch(26% 0.01 270);
+    display: flex; align-items: center; padding: 0 48px; font: 400 36px var(--mono); color: var(--ink); }
+  #term-input .chev { color: var(--accent); margin-right: 18px; }
+  #status { margin-left: auto; font: 500 26px var(--mono); color: oklch(66% 0.05 292); }
+  .caret { display: inline-block; width: 16px; height: 36px; background: var(--accent); vertical-align: -6px; margin-left: 2px; }
+  .hl { background: linear-gradient(transparent 62%, oklch(76% 0.14 292 / 0.55) 62%); background-repeat: no-repeat; }
+  .pill { display: inline-flex; align-items: center; gap: 12px; padding: 0 22px; height: 46px; border-radius: 999px;
+    font: 600 24px var(--display); white-space: nowrap; }
+  .pill.stop { background: oklch(68% 0.19 25 / 0.16); color: var(--fail); border: 1px solid oklch(68% 0.19 25 / 0.5); }
+  .pill.stop i { width: 12px; height: 12px; border-radius: 50%; background: var(--fail); display: inline-block; }
+  .tag { display: inline-block; margin-left: 18px; padding: 2px 14px; border-radius: 999px; font: 600 20px var(--display);
+    background: oklch(76% 0.14 292 / 0.18); color: var(--accent); vertical-align: 4px; border: 1px solid oklch(76% 0.14 292 / 0.45); }
+
+  /* Chrome that survives every scene. */
+  #clock { left: 110px; top: 62px; height: 52px; padding: 0 22px 0 18px; border-radius: 999px; display: flex; align-items: center; gap: 12px;
+    font: 600 24px var(--display); background: oklch(22% 0.012 268 / 0.7); border: 1px solid oklch(38% 0.012 270 / 0.7); backdrop-filter: blur(12px); }
+  #clock svg { width: 24px; height: 24px; }
+  #clock-note { font-weight: 500; color: var(--muted); }
+  #label { right: 110px; bottom: 50px; left: auto; top: auto; font: 500 18px var(--display); letter-spacing: 0.02em; color: oklch(64% 0.01 270); }
+
+  /* Big type. */
+  .type { font: 700 150px/1.02 var(--display); letter-spacing: -0.035em; white-space: nowrap; }
+  .bigcaret { width: 22px; height: 118px; vertical-align: -14px; margin-left: 14px; }
+  .band { padding: 26px 56px 34px; border-radius: 30px; background: oklch(12.5% 0.009 268 / 0.82); backdrop-filter: blur(18px); }
+
+  /* Set-up: the wall of "keep going" bubbles. */
+  .bubble { padding: 18px 30px; border-radius: 30px 30px 8px 30px; font: 500 32px var(--display); white-space: nowrap;
+    background: oklch(30% 0.05 292 / 0.9); border: 1px solid oklch(76% 0.14 292 / 0.35); color: var(--ink); box-shadow: 0 18px 50px oklch(0% 0 0 / 0.4); }
+  .bubble small { display: block; font: 500 18px var(--display); color: oklch(78% 0.04 292); margin-top: 4px; text-align: right; }
+  #counter { font: 700 220px/1 var(--mono); letter-spacing: -0.04em; color: var(--ink); }
+  #counter small { display: block; font: 500 30px var(--display); letter-spacing: 0; color: var(--muted); margin-top: 8px; }
+
+  /* Loop ring and stations. */
+  #ringsvg { left: 0; top: 0; width: 1920px; height: 1080px; overflow: visible; }
+  .station { font: 600 28px var(--display); white-space: nowrap; padding: 14px 24px; border-radius: 18px;
+    background: oklch(18% 0.011 268 / 0.92); border: 1px solid oklch(34% 0.014 270); }
+  .station small { display: block; font: 500 20px var(--mono); color: var(--muted); margin-top: 4px; }
+  #centerCount { text-align: center; }
+  #centerCount .num { font: 700 200px/1 var(--mono); letter-spacing: -0.05em; }
+  #centerCount .cap { font: 600 30px var(--display); color: var(--muted); margin-top: 6px; }
+
+  #orb { width: 300px; height: 300px; border-radius: 50%; overflow: hidden; box-shadow: 0 40px 90px oklch(0% 0 0 / 0.55); }
+  #orb img { width: 100%; height: 100%; object-fit: cover; transform: scale(1.62); }
+
+  /* Mode picker (mirrors the real Session mode menu). */
+  #picker { width: 620px; padding: 22px; border-radius: 28px; background: oklch(18% 0.011 268 / 0.95); border: 1px solid oklch(34% 0.014 270);
+    box-shadow: 0 50px 120px oklch(0% 0 0 / 0.5); }
+  #picker .h { font: 600 22px var(--display); color: var(--muted); padding: 6px 14px 14px; letter-spacing: 0.04em; text-transform: uppercase; }
+  .mode { position: relative; height: 68px; display: flex; align-items: center; gap: 18px; padding: 0 18px; font: 600 32px var(--display); z-index: 1; }
+  .mode svg { width: 30px; height: 30px; flex: none; }
+  #pickHl { position: absolute; left: 22px; right: 22px; height: 68px; border-radius: 16px; background: oklch(76% 0.14 292 / 0.22); border: 1px solid oklch(76% 0.14 292 / 0.6); }
+  #cmds { margin: 14px 18px 4px; padding-top: 16px; border-top: 1px solid oklch(28% 0.01 270); display: flex; gap: 12px; }
+  .cmd { font: 500 24px var(--mono); padding: 8px 16px; border-radius: 12px; background: oklch(24% 0.012 268); color: var(--ink); }
+
+  /* Midpoint check tiles. */
+  .tile { width: 520px; height: 420px; border-radius: 34px; padding: 40px; background: oklch(18% 0.011 268 / 0.96); border: 1px solid oklch(34% 0.014 270);
+    display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 40px 100px oklch(0% 0 0 / 0.45); }
+  .tile .cmdname { font: 500 36px var(--mono); color: var(--muted); }
+  .tile .res { font: 700 120px/1 var(--display); letter-spacing: -0.04em; }
+  .tile .sub { font: 600 34px var(--display); }
+  .tile .dim { color: var(--muted); }
+  .spin { position: absolute; right: 40px; top: 40px; width: 56px; height: 56px; }
+  #tilesHead { font: 700 72px var(--display); letter-spacing: -0.03em; white-space: nowrap; }
+
+  /* The agent's question. */
+  #question { width: 1260px; padding: 48px 56px; border-radius: 36px; background: oklch(18% 0.011 268 / 0.97); border: 1px solid oklch(34% 0.014 270);
+    box-shadow: 0 50px 130px oklch(0% 0 0 / 0.55); }
+  #question .who { font: 600 26px var(--display); color: var(--muted); display: flex; gap: 14px; align-items: center; }
+  #question .q { font: 700 76px/1.08 var(--display); letter-spacing: -0.03em; margin-top: 22px; }
+  #question .cost { font: 500 44px var(--display); color: oklch(80% 0.09 60); margin-top: 18px; }
+  #question .row { display: flex; gap: 14px; margin-top: 36px; }
+  .chk { font: 600 24px var(--mono); padding: 8px 16px; border-radius: 12px; background: oklch(80% 0.16 152 / 0.14); color: var(--pass); }
+
+  /* iPhone. */
+  #phone { width: 470px; height: 960px; border-radius: 76px; background: #0b0b0f; padding: 16px; box-shadow: 0 70px 160px oklch(0% 0 0 / 0.6), inset 0 0 0 2px oklch(40% 0.01 270); }
+  #screen { position: relative; width: 100%; height: 100%; border-radius: 62px; overflow: hidden;
+    background: radial-gradient(120% 70% at 30% 10%, oklch(40% 0.09 292), oklch(18% 0.04 280) 60%, oklch(10% 0.02 270)); }
+  #island { position: absolute; left: 50%; top: 18px; width: 128px; height: 38px; margin-left: -64px; border-radius: 20px; background: #000; }
+  #lockTime { position: absolute; left: 0; right: 0; top: 96px; text-align: center; font: 700 132px/1 var(--display); letter-spacing: -0.03em; color: oklch(96% 0.01 290); }
+  #lockDate { position: absolute; left: 0; right: 0; top: 72px; text-align: center; font: 600 26px var(--display); color: oklch(88% 0.02 290); }
+  #notif { position: absolute; left: 18px; right: 18px; top: 330px; padding: 22px 24px; border-radius: 34px; background: oklch(28% 0.02 280 / 0.72);
+    backdrop-filter: blur(20px); border: 1px solid oklch(100% 0 0 / 0.08); }
+  #notif .app { display: flex; align-items: center; gap: 12px; font: 600 20px var(--display); color: oklch(84% 0.01 290); letter-spacing: 0.03em; text-transform: uppercase; }
+  #notif .app img { width: 36px; height: 36px; border-radius: 9px; object-fit: cover; }
+  #notif .app span { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; }
+  #notif .t { font: 700 30px var(--display); margin-top: 12px; }
+  #notif .st { font: 600 24px var(--display); color: oklch(84% 0.01 290); margin-top: 2px; }
+  #notif .b { font: 500 26px/1.3 var(--display); color: oklch(94% 0.01 290); margin-top: 8px; }
+  #reply { position: absolute; left: 18px; right: 18px; top: 640px; }
+  #replyField { min-height: 120px; padding: 18px 86px 18px 24px; border-radius: 30px; background: oklch(96% 0.005 280); color: oklch(18% 0.01 270);
+    font: 500 28px/1.3 var(--display); position: relative; }
+  #replyField .caret { background: oklch(55% 0.18 292); width: 3px; height: 32px; vertical-align: -6px; }
+  #send { position: absolute; right: 16px; bottom: 16px; width: 60px; height: 60px; border-radius: 50%; background: oklch(62% 0.2 292);
+    display: flex; align-items: center; justify-content: center; }
+  #miniPhone { width: 440px; padding: 24px 28px; border-radius: 30px; background: oklch(24% 0.02 280 / 0.9); border: 1px solid oklch(100% 0 0 / 0.08); }
+  #miniPhone .app { display: flex; gap: 12px; align-items: center; font: 600 21px var(--display); color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+  #miniPhone .app img { width: 34px; height: 34px; border-radius: 8px; }
+  #miniPhone .b { font: 600 30px/1.3 var(--display); margin-top: 10px; }
+
+  #fly { padding: 18px 26px; border-radius: 28px 28px 8px 28px; background: oklch(62% 0.2 292); color: white; font: 600 30px var(--display); white-space: nowrap; }
+
+  /* End card. */
+  #endcard { width: 1920px; height: 1080px; }
+  #endLogo { width: 220px; height: 220px; border-radius: 50%; overflow: hidden; box-shadow: 0 40px 90px oklch(30% 0.05 280 / 0.35); }
+  #endLogo img { width: 100%; height: 100%; object-fit: cover; transform: scale(1.62); }
+  #endWord { font: 700 64px var(--display); letter-spacing: -0.02em; color: oklch(20% 0.02 280); }
+  #endUrl { -webkit-background-clip: text; background-clip: text; font: 700 168px/1 var(--display); letter-spacing: -0.045em; color: transparent; white-space: nowrap; }
+  #endUrl span { color: oklch(52% 0.2 292); }
+  #endLine { font: 600 44px var(--display); letter-spacing: -0.01em; color: oklch(28% 0.02 280); white-space: nowrap; }
+  #endSmall { font: 500 26px var(--display); color: oklch(42% 0.015 280); white-space: nowrap; }
+  #dark { position: absolute; inset: 0; background: #000; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="bg"></div>
+  <div id="cam">
+    <svg id="ringsvg" class="abs" viewBox="0 0 1920 1080">
+      <defs>
+        <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="14"/></filter>
+        <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="oklch(82% 0.12 292)"/><stop offset="1" stop-color="oklch(64% 0.18 292)"/>
+        </linearGradient>
+      </defs>
+      <circle id="ringGlow" fill="none" stroke="oklch(76% 0.14 292)" stroke-width="30" filter="url(#glow)"/>
+      <circle id="ring" fill="none" stroke="url(#ringGrad)" stroke-width="12" stroke-linecap="round"/>
+      <circle id="comet" fill="none" stroke="oklch(97% 0.03 292)" stroke-width="14" stroke-linecap="round" filter="drop-shadow(0 0 10px oklch(80% 0.14 292))"/>
+    </svg>
+
+    <div id="terminal" class="abs">
+      <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <div class="title"><b>codex</b> — ~/app · auth-refactor</div></div>
+      <div id="term-body"></div>
+      <div id="term-input"><span class="chev">›</span><span id="inputText"></span><span class="caret" id="inputCaret"></span><span id="status"></span></div>
+    </div>
+
+    <div id="bubbles"></div>
+    <div id="counter" class="abs">×1<small>times you typed “keep going”</small></div>
+    <div id="impact" class="abs type" style="font-size:300px;color:var(--fail)">14 failed</div>
+    <div id="impactSub" class="abs" style="font:600 52px var(--display);color:var(--muted);white-space:nowrap">It said “All done.”</div>
+    <div id="again" class="abs type">Again?</div>
+    <div id="b2Word" class="abs" style="font:700 72px var(--display);letter-spacing:-0.02em;white-space:nowrap">Looper</div>
+
+    <div id="stationTop" class="abs station">Agent stops</div>
+    <div id="stationRight" class="abs station">Looper runs your checks<small>pnpm test · lint · typecheck</small></div>
+    <div id="stationBottom" class="abs station">Failures go back<small id="sentText">“14 tests fail. Keep going.”</small></div>
+    <div id="stationLeft" class="abs station">Agent keeps working</div>
+    <div id="centerCount" class="abs"><div class="num" id="countNum">14</div><div class="cap" id="countCap">tests failing</div></div>
+
+    <div id="pill" class="abs pill stop" style="transform-origin:center"><i></i>Session stopped</div>
+
+    <div id="picker" class="abs">
+      <div class="h">Session mode</div>
+      <div id="pickHl"></div>
+      <div class="mode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8.5 9.5c-2 0-3 1.2-3 2.5s1 2.5 3 2.5c2.5 0 4.5-5 7-5 2 0 3 1.2 3 2.5s-1 2.5-3 2.5c-2.5 0-4.5-5-7-5"/></svg>Infinite</div>
+      <div class="mode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v11H9l-5 4z"/><circle cx="9" cy="10.5" r=".6" fill="currentColor"/><circle cx="12" cy="10.5" r=".6" fill="currentColor"/><circle cx="15" cy="10.5" r=".6" fill="currentColor"/></svg>Await Reply</div>
+      <div class="mode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6l2 2 3-3M4 13l2 2 3-3M12 7h8M12 14h8M4 19h16"/></svg>Completion Checks</div>
+      <div class="mode"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M11 8l2-1v10"/></svg>Max Turns 1 · 2 · 3</div>
+      <div id="cmds"><span class="cmd">pnpm test</span><span class="cmd">pnpm lint</span><span class="cmd">pnpm typecheck</span></div>
+    </div>
+
+    <div id="tilesHead" class="abs">Every check. Not just tests.</div>
+    <div id="tile0" class="abs tile"><div class="cmdname">pnpm test</div><div><div class="res ok" id="t0res">0</div><div class="sub ok" id="t0sub">0 failed</div></div></div>
+    <div id="tile1" class="abs tile"><svg class="spin" id="t1spin" viewBox="0 0 40 40"><circle cx="20" cy="20" r="15" fill="none" stroke="oklch(76% 0.14 292)" stroke-width="4" stroke-linecap="round" stroke-dasharray="60 100"/></svg><div class="cmdname">pnpm lint</div><div><div class="res" id="t1res">2</div><div class="sub" id="t1sub">errors</div></div></div>
+    <div id="tile2" class="abs tile"><svg class="spin" id="t2spin" viewBox="0 0 40 40"><circle cx="20" cy="20" r="15" fill="none" stroke="oklch(76% 0.14 292)" stroke-width="4" stroke-linecap="round" stroke-dasharray="60 100"/></svg><div class="cmdname">pnpm typecheck</div><div><div class="res" id="t2res">1</div><div class="sub" id="t2sub">error</div></div></div>
+
+    <div id="question" class="abs">
+      <div class="who"><span style="width:14px;height:14px;border-radius:50%;background:var(--accent);display:inline-block"></span>codex asks</div>
+      <div class="q">Should I remove the old /v1/login?</div>
+      <div class="cost">Cleaner code, but 3 client apps break.</div>
+      <div class="row"><span class="chk">✓ pnpm test</span><span class="chk">✓ pnpm lint</span><span class="chk">✓ pnpm typecheck</span></div>
+    </div>
+
+    <div id="orb" class="abs"><img src="assets/looper-logo-512.png"></div>
+
+    <div id="miniPhone" class="abs"><div class="app"><img src="assets/looper-logo-512.png">Looper · Codex</div><div class="b" id="miniText">Fixing the last 3 tests.</div></div>
+
+    <div id="phone" class="abs"><div id="screen">
+      <div id="island"></div>
+      <div id="lockDate">Wednesday, September 30</div>
+      <div id="lockTime">3:41</div>
+      <div id="notif">
+        <div class="app"><img src="assets/looper-logo-512.png">Looper<span>now</span></div>
+        <div class="t">Session stopped</div>
+        <div class="st">MacBook Pro</div>
+        <div class="b">Should I remove the old /v1/login? Cleaner code, but 3 client apps break.</div>
+      </div>
+      <div id="reply"><div id="replyField"><span id="replyText"></span><span class="caret" id="replyCaret"></span>
+        <div id="send"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></div></div></div>
+    </div></div>
+
+    <div id="fly" class="abs">Keep it. Clients first.</div>
+
+    <div id="endcard" class="abs">
+      <div id="endLogo" class="abs"><img src="assets/looper-logo-512.png"></div>
+      <div id="endWord" class="abs">Looper</div>
+      <div id="endUrl" class="abs">looper<span>.fyi</span></div>
+      <div id="endLine" class="abs">Keeps your coding agents going until your checks pass.</div>
+      <div id="endSmall" class="abs">Runs locally on your Mac · Reply from your iPhone · Codex, Claude Code, Cursor, Zed and more</div>
+    </div>
+
+    <div id="dark"></div>
+    <div id="caption" class="abs type band"></div>
+  </div>
+  <div id="clock" class="abs"><svg id="clockIcon" viewBox="0 0 24 24"></svg><span id="clockTime">11:47 PM</span><span id="clockNote"></span></div>
+  <div id="label" class="abs">Dramatization · UI simplified</div>
+</div>
+
+<script>
+// ---------- Timing: one source of truth for the beat sheet ----------
+const FILM_SECONDS = 50;
+// Story beats sit on the music's beat grid (Rising Sun, ~76 BPM), so every cut lands on a beat.
+const MUSIC_BEAT = 0.78948;
+const onBeat = n => n * MUSIC_BEAT;
+const BEAT = {
+  opening: 0, theme: onBeat(4), setup: onBeat(7), catalyst: onBeat(12), impact: onBeat(14), debate: onBeat(16),
+  breakTwo: onBeat(18), fun: onBeat(21), bStory: onBeat(26), midpoint: onBeat(30), badGuys: onBeat(34),
+  allLost: onBeat(36), darkNight: onBeat(38), breakThree: onBeat(40), finale: onBeat(45), finalImage: onBeat(52),
+  endCard: onBeat(56),
+};
+const LAP_START = BEAT.fun + onBeat(1);
+const REPLY_SENT = BEAT.finale - 0.05;              // the reply leaves the phone on the Finale downbeat
+const TERM_ENTER_FINALE = BEAT.breakThree + 3.2;    // the session window is back before the reply flies
+const FINALE_HERO = [BEAT.finale + 3.2, BEAT.finale + 4.9];   // the checks-pass hero beat
+const LAP_SECONDS = onBeat(2);
+const LAP_COUNT = 4;
+const FAILING_PER_LAP = [14, 9, 3, 0];
+const RING = { cx: 960, cy: 540, radiusSmall: 230, radiusLarge: 320 };
+const TERMINAL_HOME = { x: 960, y: 590, s: 1 };
+const DEBATE_FRAME = [960, 630, 1.0];
+const END_ORB_Y = 250;
+const TERMINAL_HALF = { w: 690, h: 330 };
+const TERM_PAD = 48, BODY_TOP = 100, LINE_H = 60, CHAR_W = 21.7, INPUT_Y = TERMINAL_HALF.h - 48;
+// Terminal-local centre of body line i (origin = window centre).
+const lineY = i => -TERMINAL_HALF.h + BODY_TOP + i * LINE_H + LINE_H / 2;
+const lineX = chars => -TERMINAL_HALF.w + TERM_PAD + chars * CHAR_W;
+
+// ---------- Math helpers (all motion is a pure function of t) ----------
+const clamp01 = x => Math.min(1, Math.max(0, x));
+const lerp = (a, b, k) => a + (b - a) * k;
+const prog = (t, a, b) => clamp01((t - a) / (b - a));
+const smoother = k => k * k * k * (k * (k * 6 - 15) + 10);
+const easeOut = k => 1 - Math.pow(1 - k, 3);
+const easeIn = k => k * k * k;
+const easeOutBack = k => { const c = 1.6; return 1 + (c + 1) * Math.pow(k - 1, 3) + c * Math.pow(k - 1, 2); };
+// Opacity window: fades in over [a, a+fi], out over [b-fo, b].
+const win = (t, a, b, fi = 0.25, fo = 0.25) => Math.min(prog(t, a, a + fi), 1 - prog(t, b - fo, b));
+// Keyframes: [[time, value | value[]], ...]; smootherstep between keys.
+function kf(t, keys) {
+  if (t <= keys[0][0]) return keys[0][1];
+  for (let i = 1; i < keys.length; i++) {
+    if (t <= keys[i][0]) {
+      const [ta, va] = keys[i - 1], [tb, vb] = keys[i];
+      const k = smoother((t - ta) / (tb - ta));
+      return Array.isArray(va) ? va.map((v, j) => lerp(v, vb[j], k)) : lerp(va, vb, k);
+    }
+  }
+  return keys[keys.length - 1][1];
+}
+function kfLinear(t, keys) {
+  if (t <= keys[0][0]) return keys[0][1];
+  for (let i = 1; i < keys.length; i++) if (t <= keys[i][0]) {
+    const [ta, va] = keys[i - 1], [tb, vb] = keys[i]; return lerp(va, vb, (t - ta) / (tb - ta));
+  }
+  return keys[keys.length - 1][1];
+}
+const typed = (text, t, start, charsPerSecond = 28) => text.slice(0, Math.max(0, Math.floor((t - start) * charsPerSecond)));
+function seeded(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
+
+const $ = id => document.getElementById(id);
+function place(el, cx, cy, scale = 1, opacity = 1, rotate = 0) {
+  el.style.display = opacity <= 0.001 ? 'none' : '';
+  el.style.opacity = opacity;
+  el.style.transform = `translate(${cx}px, ${cy}px) translate(-50%, -50%) scale(${scale}) rotate(${rotate}deg)`;
+}
+
+// ---------- Clock ----------
+const MIN = (h, m) => h * 60 + m;               // minutes after the previous midnight
+const CLOCK_KEYS = [
+  [0, MIN(23, 47)], [BEAT.setup, MIN(23, 52)], [BEAT.catalyst, MIN(25, 58)], [BEAT.debate, MIN(26, 14)],
+  [BEAT.fun, MIN(26, 20)], [BEAT.bStory, MIN(26, 21)], [BEAT.midpoint, MIN(27, 10)], [BEAT.allLost, MIN(27, 40)],
+  [BEAT.breakThree, MIN(27, 41)], [BEAT.finale, MIN(27, 47)], [BEAT.finalImage, MIN(27, 52)], [BEAT.finalImage + 2.4, MIN(31, 2)],
+];
+function clockText(minutes) {
+  const m = Math.floor(minutes) % (24 * 60), h = Math.floor(m / 60), mm = String(m % 60).padStart(2, '0');
+  return `${h % 12 === 0 ? 12 : h % 12}:${mm} ${h < 12 ? 'AM' : 'PM'}`;
+}
+const MOON = '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" fill="oklch(82% 0.1 292)"/>';
+const SUN = '<circle cx="12" cy="12" r="4.5" fill="oklch(72% 0.17 60)"/><g stroke="oklch(72% 0.17 60)" stroke-width="2" stroke-linecap="round"><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></g>';
+
+// ---------- Background: night paper to pearl dawn ----------
+function background(t) {
+  const dawn = smoother(prog(t, BEAT.finalImage + 0.3, BEAT.finalImage + 2.6));
+  const L = lerp(12.5, 95.5, dawn), C = lerp(0.009, 0.012, dawn), H = lerp(268, 80, dawn);
+  const glowL = lerp(22, 99, dawn), glowH = lerp(292, 70, dawn);
+  $('bg').style.background =
+    `radial-gradient(70% 60% at ${50 + 9 * Math.sin(t * 0.37)}% ${38 + 6 * Math.cos(t * 0.29)}%, oklch(${glowL}% ${lerp(0.05, 0.03, dawn)} ${glowH}) 0%, oklch(${L}% ${C} ${H}) 70%)`;
+  return dawn;
+}
+
+// ---------- Terminal content, one block per story state ----------
+const OPENING_LINES = [
+  { at: -1, html: '<span class="you"><span class="chev">›</span> Refactor auth. Run pnpm test <span id="phrase">before you finish</span>.</span>' },
+  { at: -1, html: '<span class="work"><span class="bul">•</span> Reading 38 files in src/auth</span>' },
+  { at: 0.05, html: '<span class="work"><span class="bul">•</span> Rewriting the session middleware</span>' },
+  { at: 0.8, html: '<span class="work"><span class="bul">•</span> Moving token refresh into one module</span>' },
+  { at: 1.6, html: '<span class="work"><span class="bul">•</span> Updating 12 call sites</span>' },
+  { at: 2.2, html: '<span class="dim">    src/auth/session.ts   </span><span class="ok">+142</span> <span class="bad">−88</span>' },
+  { at: 2.6, html: '<span class="dim">    src/auth/refresh.ts   </span><span class="ok">+61</span> <span class="bad">−120</span>' },
+];
+const CATALYST_LINES = [
+  { at: -1, html: '<span class="dim">› keep going </span><span class="bad">×23</span>' },
+  { at: BEAT.catalyst + 0.3, html: '<span class="ok">✓ All done! The refactor is complete.</span>' },
+  { at: BEAT.catalyst + 0.6, html: '<span class="pill stop" id="termPill" style="height:42px;font-size:22px"><i></i>Session stopped</span>' },
+  { at: BEAT.catalyst + 0.85, html: '<span class="you"><span class="chev">$</span> pnpm test</span>' },
+  { at: BEAT.catalyst + 1.05, html: '<span class="bad" id="failLine">  ✗ 14 failed</span><span class="dim">   200 passed</span>' },
+  { at: BEAT.catalyst + 1.25, html: '<span class="dim">    auth/refresh.test.ts  </span><span class="bad">✗ token expiry</span>' },
+];
+const FINALE_LINES = [
+  { at: -1, html: '<span class="dim">› Refactor auth. Run pnpm test before you finish.</span>' },
+  { at: -1, html: '<span class="dim">  … Should I remove the old /v1/login?</span>' },
+  { at: BEAT.finale + 1.0, html: '<span class="you"><span class="chev">›</span> Keep it. Clients first.<span class="tag">same session · from iPhone</span></span>' },
+  { at: BEAT.finale + 1.8, html: '<span class="work"><span class="bul">•</span> Keeping /v1/login, adding a deprecation warning</span>' },
+  { at: BEAT.finale + 2.6, html: '<span class="dim">  Agent stopped → Looper runs your checks</span>' },
+  { at: BEAT.finale + 3.2, html: '<span class="ok">  ✓ pnpm test   ✓ pnpm lint   ✓ pnpm typecheck</span>' },
+  { at: FINALE_HERO[1] + 0.1, html: '<span class="ok">✓ Done. Kept /v1/login with a warning. All checks pass.</span>' },
+];
+const TYPE_CHARS_PER_SECOND = 55;
+let renderedBlock = null;
+function terminalBlock(t) {
+  if (t < BEAT.setup) return ['opening', OPENING_LINES];
+  if (t < BEAT.breakThree) return ['catalyst', CATALYST_LINES];
+  return ['finale', FINALE_LINES];
+}
+function renderTerminalBody(t) {
+  const [name, lines] = terminalBlock(t);
+  if (renderedBlock !== name) {
+    $('term-body').innerHTML = lines.map((l, i) => `<div class="line" data-i="${i}">${l.html}</div>`).join('');
+    renderedBlock = name;
+  }
+  const nodes = $('term-body').children;
+  lines.forEach((l, i) => {
+    const k = easeOut(prog(t, l.at, l.at + 0.3));
+    const themeDim = name === 'opening' && i > 0 ? 1 - 0.85 * easeOut(prog(t, BEAT.theme + 0.2, BEAT.theme + 0.8)) : 1;
+    const heroDim = name === 'finale' ? 1 - 0.7 * win(t, FINALE_HERO[0], FINALE_HERO[1], 0.3, 0.4) : 1;
+    nodes[i].style.opacity = k * themeDim * heroDim;
+    const chars = nodes[i].textContent.length;
+    const reveal = l.at < 0 ? 1 : prog(t, l.at, l.at + chars / TYPE_CHARS_PER_SECOND);
+    nodes[i].style.clipPath = reveal < 1 ? `inset(-10px ${100 - reveal * 100}% -10px 0)` : '';
+    nodes[i].style.transform = `translateY(${(1 - k) * 18}px)`;
+  });
+  const phrase = $('phrase');
+  if (phrase) {
+    const k = easeOut(prog(t, BEAT.theme + 0.3, BEAT.theme + 1.0));
+    phrase.className = 'hl';
+    phrase.style.backgroundSize = `${k * 100}% 100%`;
+    phrase.style.color = k > 0.05 ? 'oklch(90% 0.07 292)' : '';
+  }
+}
+
+// Input line: what "you" are about to type.
+const DEBATE_TEXT = 'keep go';
+function inputText(t) {
+  if (t >= BEAT.debate && t < BEAT.breakTwo) {
+    const typeStart = BEAT.debate + 0.15, deleteStart = BEAT.debate + 0.85;
+    if (t < deleteStart) return typed(DEBATE_TEXT, t, typeStart, 14);
+    return DEBATE_TEXT.slice(0, Math.max(0, DEBATE_TEXT.length - Math.floor((t - deleteStart) * 22)));
+  }
+  return '';
+}
+const SPINNER = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏';
+const WORK_SPANS = [[0, BEAT.catalyst + 0.3, 1452], [BEAT.finale + 1.2, BEAT.finale + 3.2, 38]];  // [from, to, seconds already worked]
+function agentStatus(t) {
+  const span = WORK_SPANS.find(([a, b]) => t >= a && t < b);
+  if (!span) return '';
+  const elapsed = Math.floor(span[2] + (t - span[0]) * 12);   // the night passes faster than the film
+  return `${SPINNER[Math.floor(t * 12) % SPINNER.length]} Working · ${Math.floor(elapsed / 60)}m ${String(elapsed % 60).padStart(2, '0')}s`;
+}
+const caretOn = t => Math.floor(t * 2.2) % 2 === 0;
+
+function terminal(t) {
+  const el = $('terminal');
+  // Theme push: focus "before you finish" (local x ≈ +45, y ≈ -265 from the centre).
+  const THEME_SCALE = 1.8;
+  const phraseCentre = lineX((29 + 46) / 2);
+  const themeFocus = [960 - THEME_SCALE * phraseCentre, 470 - THEME_SCALE * lineY(0), THEME_SCALE];
+  const [x, y, s] = kf(t, [
+    [0, [960, 590, 1]], [BEAT.theme - 0.6, [960, 586, 1.05]], [BEAT.theme, [960, 560, 1.18]], [BEAT.theme + 1.2, themeFocus],
+    [BEAT.setup, [themeFocus[0], themeFocus[1] - 30, THEME_SCALE * 1.04]],
+    // Foreground fly-through: the prompt scales past the camera while the first bubble waits underneath.
+    [BEAT.setup + 0.35, [themeFocus[0] - 200, themeFocus[1] + 120, THEME_SCALE * 1.9]],
+    [BEAT.setup + 0.36, [960, 590, 0.9]], [BEAT.catalyst + 0.2, [960, 590, 0.96]], [BEAT.impact, [960, 590, 1.0]],
+    [BEAT.debate, DEBATE_FRAME], [BEAT.breakTwo, [DEBATE_FRAME[0], DEBATE_FRAME[1] + 10, DEBATE_FRAME[2] * 1.03]],
+    [TERM_ENTER_FINALE, [1420, 590, 0.74]], [BEAT.finale + 0.7, [1210, 590, 0.8]], [BEAT.finale + 2.2, [960, 600, 0.92]],
+    [BEAT.finalImage, [960, 595, 0.97]], [BEAT.finalImage + 1.1, [960, 590, 1]], [BEAT.endCard, [960, 586, 1.03]],
+    [BEAT.endCard + 0.9, [960, END_ORB_Y, 0.16]],
+  ]);
+  const o = Math.max(
+    1 - prog(t, BEAT.setup - 0.1, BEAT.setup + 0.15),
+    t >= BEAT.setup ? win(t, BEAT.catalyst + 0.05, BEAT.impact + 0.15, 0.35, 0.15) : 0,
+    win(t, BEAT.debate - 0.02, BEAT.breakTwo + 0.3, 0.02, 0.3),
+    t >= TERM_ENTER_FINALE ? win(t, TERM_ENTER_FINALE, BEAT.endCard + 0.7, 0.4, 0.35) : 0,
+  );
+  place(el, x, y, s, o);
+  if (o > 0) {
+    renderTerminalBody(t);
+    $('inputText').textContent = inputText(t);
+    $('status').textContent = agentStatus(t);
+    $('inputCaret').style.opacity = caretOn(t) ? 1 : 0.15;
+  }
+}
+
+// ---------- Theme / Set-up / Catalyst / Debate ----------
+const BUBBLE_COUNT = 23;
+const BUBBLE_TEXTS = ['keep going, please', 'keep going', 'continue', 'you’re not done', 'keep going', 'did you run the tests?',
+  'keep going', 'continue', 'keep going', 'tests are still red', 'keep going', 'keep going'];
+const bubbleEls = [];
+const GRID_COLS = 3, GRID_ROWS = 8;
+const GRID_X0 = 880, GRID_DX = 370, GRID_Y0 = 150, GRID_DY = 105;
+const BUBBLE_SCALE = 0.85;
+// Visit cells from the centre outwards so the wall fills evenly.
+const GRID_ORDER = (() => {
+  const rnd = seeded(11);
+  const cells = Array.from({ length: GRID_COLS * GRID_ROWS }, (_, c) => c);
+  const centreDistance = c => Math.hypot((c % GRID_COLS) - 1, (Math.floor(c / GRID_COLS) - 3.5) * 0.6) + rnd() * 0.3;
+  return cells.map(c => [c, centreDistance(c)]).sort((a, b) => a[1] - b[1]).map(([c]) => c);
+})();
+const COUNTER_HOME = [392, 560];
+const bubbleLayout = (() => {
+  const rnd = seeded(7);
+  return Array.from({ length: BUBBLE_COUNT }, (_, i) => {
+    const span = BEAT.catalyst - BEAT.setup - 0.6;
+    const appear = i === 0 ? BEAT.setup - 0.25 : BEAT.setup + 0.1 + span * Math.pow(i / (BUBBLE_COUNT - 1), 0.5);
+    const cell = GRID_ORDER[i], col = cell % GRID_COLS, row = Math.floor(cell / GRID_COLS);
+    const x = GRID_X0 + col * GRID_DX + (rnd() - 0.5) * 24;
+    const y = GRID_Y0 + row * GRID_DY + (rnd() - 0.5) * 20;
+    const rot = i === 0 ? 0 : (rnd() - 0.5) * 6;
+    const minutes = MIN(23, 52) + Math.round(126 * i / (BUBBLE_COUNT - 1));
+    return { appear, x, y, rot, text: BUBBLE_TEXTS[i % BUBBLE_TEXTS.length], stamp: clockText(minutes) };
+  });
+})();
+function buildBubbles() {
+  const host = $('bubbles');
+  bubbleLayout.forEach(b => {
+    const el = document.createElement('div');
+    el.className = 'abs bubble';
+    el.innerHTML = `${b.text}<small>${b.stamp}</small>`;
+    host.appendChild(el); bubbleEls.push(el);
+  });
+}
+function setup(t) {
+  // The wall collapses into the counter; the counter then docks into the terminal's "keep going" line.
+  const collapse = smoother(prog(t, BEAT.catalyst - 0.35, BEAT.catalyst + 0.05));
+  bubbleLayout.forEach((b, i) => {
+    const k = easeOutBack(prog(t, b.appear, b.appear + 0.28));
+    // The first bubble ("please") opens as the hero, then joins the wall.
+    const heroK = i === 0 ? smoother(prog(t, BEAT.setup + 0.7, BEAT.setup + 1.3)) : 1;
+    const heroDrift = i === 0 ? 50 * prog(t, BEAT.setup - 0.25, BEAT.setup + 0.7) : 0;
+    const bx = lerp(1180 - heroDrift, b.x, heroK), by = lerp(560 - heroDrift * 0.4, b.y, heroK);
+    const x = lerp(bx, COUNTER_HOME[0], collapse), y = lerp(by, COUNTER_HOME[1], collapse);
+    const o = Math.min(prog(t, b.appear, b.appear + 0.12), 1 - prog(t, BEAT.catalyst - 0.1, BEAT.catalyst + 0.05));
+    const scale = (0.7 + 0.3 * k) * lerp(1.7, BUBBLE_SCALE, heroK);
+    place(bubbleEls[i], x, y, lerp(scale, 0.2, collapse), o, b.rot * (1 - collapse));
+  });
+  const count = bubbleLayout.filter(b => t >= b.appear).length;
+  $('counter').firstChild.textContent = `×${Math.max(1, count)}`;
+  const dock = smoother(prog(t, BEAT.catalyst, BEAT.catalyst + 0.45));
+  const dockAt = [960 + 0.93 * lineX(15), 590 + 0.93 * lineY(0)];
+  const co = Math.min(prog(t, BEAT.setup, BEAT.setup + 0.3), 1 - prog(t, BEAT.catalyst + 0.3, BEAT.catalyst + 0.5));
+  const grow = 1 + 0.06 * easeOut(prog(t, BEAT.setup + 2, BEAT.catalyst));
+  place($('counter'), lerp(COUNTER_HOME[0] + 12 * prog(t, BEAT.setup, BEAT.catalyst), dockAt[0], dock),
+    lerp(COUNTER_HOME[1], dockAt[1], dock), lerp(grow, 0.16, dock), co);
+
+  // Catalyst to impact: the terminal's own "14 failed" grows into the giant headline.
+  const carry = easeOut(prog(t, BEAT.impact, BEAT.impact + 0.4));
+  const failFrom = [960 + lineX(8.5), 590 + lineY(4)];
+  const io = win(t, BEAT.impact, BEAT.debate, 0.01, 0.06);
+  const push = 1 + 0.12 * prog(t, BEAT.impact, BEAT.debate);
+  place($('impact'), lerp(failFrom[0], 960, carry), lerp(failFrom[1], 500, carry), lerp(IMPACT_FROM_SCALE, 1, carry) * push, io);
+  place($('impactSub'), 960, 700, push, Math.min(io, prog(t, BEAT.impact + 0.35, BEAT.impact + 0.65)));
+  const failLine = $('failLine');
+  if (failLine) failLine.style.visibility = t >= BEAT.impact && t < BEAT.debate ? 'hidden' : '';
+  const ao = win(t, BEAT.debate + 0.1, BEAT.breakTwo + 0.1, 0.25, 0.3);
+  place($('again'), 960, lerp(200, 180, easeOut(prog(t, BEAT.debate, BEAT.debate + 0.6))), 0.95 + 0.05 * prog(t, BEAT.debate, BEAT.breakTwo), ao);
+}
+const IMPACT_FROM_SCALE = 0.15;   // 36 px mono line vs 300 px display headline
+
+// ---------- The loop ring ----------
+function ringState(t) {
+  // Break into Two: draw from the pill; Fun & Games: grow; All Is Lost: dim + halt; Finale: relight around the terminal.
+  const draw = smoother(prog(t, BEAT.breakTwo + 1.0, BEAT.breakTwo + 1.9));
+  const [cx, cy, r] = kf(t, [
+    [BEAT.breakTwo, [640, 540, RING.radiusSmall]], [BEAT.fun, [640, 540, RING.radiusSmall]],
+    [LAP_START, [RING.cx, RING.cy, RING.radiusLarge]], [BEAT.midpoint, [RING.cx, RING.cy, RING.radiusLarge]],
+    [BEAT.midpoint + 0.01, [RING.cx, 560, 430]], [BEAT.allLost, [RING.cx, 560, 430]], [BEAT.breakThree, [RING.cx, 560, 450]],
+    [BEAT.finale, [1210, 590, 470]], [BEAT.finale + 2.2, [960, 600, 540]], [BEAT.finalImage + 1.1, [960, 590, 600]],
+    [BEAT.endCard, [960, 590, 620]], [BEAT.endCard + 0.9, [960, END_ORB_Y, 112]],
+  ]);
+  const visible = t >= BEAT.breakTwo + 0.95 && t < BEAT.endCard + 1.3;
+  const hiddenDuringTiles = t >= BEAT.midpoint && t < BEAT.badGuys;
+  const lostDim = kf(t, [[BEAT.allLost, 1], [BEAT.allLost + 0.6, 0.25], [BEAT.finale + 1.0, 0.25], [BEAT.finale + 1.6, 1]]);
+  // The loop goes dark segment by segment on the half-beat, then closes again when the reply lands.
+  const LOST_SEGMENTS = 4, SEGMENT_GAP = 0.05;
+  const since = t - BEAT.allLost, step = MUSIC_BEAT / 2;
+  const done = Math.min(LOST_SEGMENTS, Math.floor(since / step));
+  const partial = done < LOST_SEGMENTS ? smoother(clamp01((since - done * step) / 0.25)) : 0;
+  const gapLost = t < BEAT.allLost ? 0 : SEGMENT_GAP * (done + partial);
+  const gap = t < BEAT.finale + 1.0 ? gapLost : lerp(SEGMENT_GAP * LOST_SEGMENTS, 0, smoother(prog(t, BEAT.finale + 1.0, BEAT.finale + 1.6)));
+  // Full during Break into Two / Fun & Games, hidden under the tiles, half-lit behind the question
+  // and phone, then relit around the terminal in the Finale and gone before the end card.
+  const o = !visible || hiddenDuringTiles ? 0
+    : t < BEAT.midpoint ? 1
+    : t < BEAT.finale ? 0.5 * prog(t, BEAT.badGuys, BEAT.badGuys + 0.4)
+    : 0.8 * Math.min(prog(t, BEAT.finale + 0.4, BEAT.finale + 1.0), 1 - prog(t, BEAT.endCard + 0.9, BEAT.endCard + 1.3));
+  return { cx, cy, r, draw: t < BEAT.fun ? draw : 1, gap, dim: lostDim, o };
+}
+const COMET_FRACTION = 0.07;
+const COMET_TURNS_PER_SECOND = 0.35;
+const cometTravel = t => t * COMET_TURNS_PER_SECOND;
+function ring(t) {
+  const s = ringState(t);
+  const circumference = 2 * Math.PI * s.r;
+  for (const id of ['ring', 'ringGlow']) {
+    const c = $(id);
+    c.setAttribute('cx', s.cx); c.setAttribute('cy', s.cy); c.setAttribute('r', s.r);
+    const visibleLength = circumference * s.draw * (1 - s.gap);
+    c.setAttribute('stroke-dasharray', `${visibleLength} ${circumference}`);
+    // The gap opens at the top (where "Agent stops" sits); a drawing ring starts from the pill above the orb.
+    const lostDrift = 40 * prog(t, BEAT.allLost, BEAT.breakThree);   // the halted ring still drifts
+    c.setAttribute('transform', `rotate(${-90 + s.gap * 180 + lostDrift} ${s.cx} ${s.cy})`);
+    const flash = t >= FINALE_HERO[0] ? 1 + 2.5 * (1 - easeOut(prog(t, FINALE_HERO[0], FINALE_HERO[0] + 0.9))) : 1;
+    c.style.opacity = s.o * (id === 'ringGlow' ? Math.min(1, 0.35 * s.dim * flash) : lerp(0.35, 1, s.dim));
+  }
+  $('ring').style.filter = s.dim < 0.9 ? `saturate(${s.dim})` : '';
+  // Tertiary motion: a bright comet laps the ring while the loop is alive and freezes when it halts.
+  const comet = $('comet');
+  const cometLength = circumference * COMET_FRACTION;
+  const halted = t >= BEAT.allLost + 0.5 && t < BEAT.finale + 1.2;
+  const travel = halted ? cometTravel(BEAT.allLost + 0.5) : cometTravel(t) - (t >= BEAT.finale + 1.2 ? cometTravel(BEAT.finale + 1.2) - cometTravel(BEAT.allLost + 0.5) : 0);
+  comet.setAttribute('cx', s.cx); comet.setAttribute('cy', s.cy); comet.setAttribute('r', s.r);
+  comet.setAttribute('stroke-dasharray', `${cometLength} ${circumference}`);
+  comet.setAttribute('transform', `rotate(${-90 + travel * 360} ${s.cx} ${s.cy})`);
+  const inLaps = t >= BEAT.fun && t < BEAT.midpoint;   // the orb itself is the comet during Fun & Games
+  comet.style.opacity = inLaps || s.draw < 1 ? 0 : s.o * (halted ? 0.25 : 0.9);
+  return s;
+}
+
+// Where the orb is on the loop during Fun & Games.
+function lapAngle(t) {
+  const lapT = (t - (LAP_START)) / LAP_SECONDS;      // laps completed (fractional)
+  return -Math.PI / 2 + Math.max(0, lapT) * 2 * Math.PI;  // start at the top: "Agent stops"
+}
+const lapIndex = t => Math.floor((t - (LAP_START)) / LAP_SECONDS);
+
+function orb(t, rs) {
+  let x, y, s, o = 1, rot = 0;
+  if (t < BEAT.breakTwo) { o = 0; }
+  else if (t < LAP_START) {
+    // Rolls in from the left and settles inside the new ring.
+    const k = easeOut(prog(t, BEAT.breakTwo, BEAT.breakTwo + 0.9));
+    x = lerp(-200, 640, k); y = 540; rot = lerp(-360, 0, k);
+    const toTrack = smoother(prog(t, BEAT.fun, LAP_START));
+    x = lerp(x, rs.cx, toTrack); y = lerp(y, rs.cy - rs.r, toTrack);
+    s = lerp(1, 0.36, toTrack);
+    o = Math.min(1, prog(t, BEAT.breakTwo, BEAT.breakTwo + 0.2));
+  } else if (t < BEAT.midpoint) {
+    const a = Math.min(lapAngle(t), -Math.PI / 2 + LAP_COUNT * 2 * Math.PI);
+    x = rs.cx + rs.r * Math.cos(a); y = rs.cy + rs.r * Math.sin(a); s = 0.36; rot = a * 57;
+    o = 1 - prog(t, BEAT.midpoint - 0.15, BEAT.midpoint);
+  } else if (t >= BEAT.endCard) {
+    o = 0;
+  } else { o = 0; }
+  if (o > 0) place($('orb'), x, y, s, o, rot);
+  else $('orb').style.display = 'none';
+}
+
+function stations(t, rs) {
+  const o = win(t, BEAT.fun + 0.3, BEAT.midpoint, 0.4, 0.2);
+  const a = lapAngle(t);
+  const spots = [['stationTop', 0, -1, 0], ['stationRight', 1, 0, 1], ['stationBottom', 0, 1, 2], ['stationLeft', -1, 0, 3]];
+  const pad = 110;   // orb radius + breathing room, so the orb never covers a label
+  for (const [id, dx, dy, idx] of spots) {
+    const el = $(id);
+    const px = rs.cx + dx * (rs.r + pad + (dx ? 130 : 0)), py = rs.cy + dy * (rs.r + pad - 30);
+    // Station lights for 0.5s after the orb passes it.
+    const stationAngle = -Math.PI / 2 + idx * Math.PI / 2;
+    const since = ((a - stationAngle) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+    const lit = t > LAP_START && t < BEAT.midpoint - 0.1 ? Math.max(0, 1 - since / 1.6) : 0;
+    el.style.borderColor = `oklch(${lerp(34, 76, lit)}% ${lerp(0.014, 0.14, lit)} ${lerp(270, 292, lit)})`;
+    el.style.background = `oklch(${lerp(18, 26, lit)}% ${lerp(0.011, 0.06, lit)} ${lerp(268, 292, lit)} / 0.94)`;
+    place(el, px, py, 1 + 0.04 * lit, o);
+  }
+  // Counter updates when the orb passes "Looper runs your checks" (a quarter lap in).
+  const checksRun = Math.floor((t - (LAP_START) - LAP_SECONDS / 4) / LAP_SECONDS);
+  const failing = FAILING_PER_LAP[Math.max(0, Math.min(LAP_COUNT - 1, checksRun))];
+  $('countNum').textContent = failing;
+  $('countNum').style.color = failing === 0 ? 'var(--pass)' : 'var(--ink)';
+  $('countCap').textContent = failing === 0 ? 'tests failing' : 'tests failing';
+  $('sentText').textContent = failing === 0 ? '“All tests pass.”' : `“${failing} tests fail. Keep going.”`;
+  const cardPop = checksRun >= 0 ? 1 + 0.08 * (1 - easeOut(prog(t - (checksRun * LAP_SECONDS), LAP_START + LAP_SECONDS / 4, LAP_START + LAP_SECONDS / 4 + 0.35))) : 1;
+  place($('centerCount'), rs.cx, rs.cy - 10, cardPop, win(t, BEAT.fun + 0.5, BEAT.midpoint, 0.4, 0.15));
+}
+
+// ---------- Break into Two: pill → ring, mode picker ----------
+function breakTwo(t) {
+  // The red pill is carried out of the debate terminal to the top of the new ring, then collapses into
+  // the point the loop is drawn from: a stop becomes a loop.
+  const PILL_HALF_WIDTH = 125;
+  const s0 = DEBATE_FRAME[2] * 1.03;
+  const inTerm = [DEBATE_FRAME[0] + s0 * (lineX(0) + PILL_HALF_WIDTH), DEBATE_FRAME[1] + 10 + s0 * lineY(2)];
+  const ringTop = [640, 540 - RING.radiusSmall];
+  const k = smoother(prog(t, BEAT.breakTwo, BEAT.breakTwo + 0.9));
+  const x = lerp(inTerm[0], ringTop[0], k), y = lerp(inTerm[1], ringTop[1], k) - 60 * Math.sin(Math.PI * k);
+  const squeeze = smoother(prog(t, BEAT.breakTwo + 1.0, BEAT.breakTwo + 1.35));
+  const pill = $('pill');
+  pill.style.background = ''; pill.style.color = '';
+  const o = Math.min(prog(t, BEAT.breakTwo - 0.05, BEAT.breakTwo + 0.05), 1 - prog(t, BEAT.breakTwo + 1.25, BEAT.breakTwo + 1.4));
+  pill.style.display = o > 0 ? '' : 'none';
+  pill.style.opacity = o;
+  const sc = lerp(s0, 1.5, k);
+  pill.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%) scale(${sc * lerp(1, 0.08, squeeze)}, ${sc * lerp(1, 0.3, squeeze)})`;
+  // Name the product the moment it arrives.
+  const wo = win(t, BEAT.breakTwo + 0.9, BEAT.fun + 0.3, 0.35, 0.3);
+  place($('b2Word'), 640, lerp(870, 850, easeOut(prog(t, BEAT.breakTwo + 0.9, BEAT.breakTwo + 1.4))), 1, wo);
+
+  // Mode picker: highlight walks down to Completion Checks.
+  const po = win(t, BEAT.breakTwo + 0.9, BEAT.fun + 0.4, 0.35, 0.35);
+  const py = lerp(560, 540, easeOut(prog(t, BEAT.breakTwo + 0.9, BEAT.breakTwo + 1.4)));
+  place($('picker'), 1340, py, 1.2, po);
+  const row = kf(t, [[BEAT.breakTwo + 1.3, 0], [BEAT.breakTwo + 1.6, 1], [BEAT.breakTwo + 1.95, 2]]);
+  $('pickHl').style.top = `${22 + 48 + row * 68}px`;
+  const cmdsK = prog(t, BEAT.breakTwo + 2.0, BEAT.breakTwo + 2.4);
+  $('cmds').style.opacity = cmdsK;
+  $('cmds').style.transform = `translateY(${(1 - easeOut(cmdsK)) * 14}px)`;
+}
+
+// ---------- Midpoint: check tiles ----------
+function setTile(i, res, sub, ok) {
+  const r = $('t' + i + 'res'), su = $('t' + i + 'sub');
+  if (r.textContent !== res) r.textContent = res;
+  if (su.textContent !== sub) su.textContent = sub;
+  const tone = ok === null ? 'dim' : ok ? 'ok' : 'bad';
+  r.className = 'res ' + tone;
+  su.className = 'sub ' + tone;
+}
+const TILE_SLOTS = [400, 960, 1520];
+function checkTiles(t) {
+  const inFinale = t >= FINALE_HERO[0] - 0.2;
+  const [a, b] = inFinale ? FINALE_HERO : [BEAT.midpoint, BEAT.badGuys + 0.45];
+  const o = win(t, a, b, 0.05, inFinale ? 0.4 : 0.1);
+  const push = 1 + 0.07 * prog(t, a, b);
+  $('tilesHead').textContent = inFinale ? 'All checks pass.' : 'Every check. Not just tests.';
+  $('tilesHead').style.color = inFinale ? 'var(--pass)' : '';
+  place($('tilesHead'), 960, inFinale ? 225 : 250, push, Math.min(o, prog(t, a + 0.1, a + 0.4), inFinale ? 1 : 1 - prog(t, BEAT.badGuys - 0.3, BEAT.badGuys - 0.05)));
+  const tileAt = [a, a + 0.12, a + 0.24];
+  // Exit of the midpoint: tiles shrink into the question card's check chips.
+  const toChips = inFinale ? 0 : smoother(prog(t, BEAT.badGuys - 0.25, BEAT.badGuys + 0.2));
+  [0, 1, 2].forEach(i => {
+    const k = easeOutBack(prog(t, tileAt[i], tileAt[i] + 0.35));
+    let x = TILE_SLOTS[i] * push + 960 * (1 - push), y = 620, sc = lerp(0.85, 1, k);
+    if (!inFinale && i === 0) {           // the ring's green 0 is carried into the first tile
+      const carry = smoother(prog(t, a, a + 0.45));
+      x = lerp(960, x, carry); y = lerp(530, y, carry); sc = lerp(0.55, 1, carry);
+    }
+    if (toChips > 0) {
+      const chip = questionChipCentre(i, t);
+      x = lerp(x, chip[0], toChips); y = lerp(y, chip[1], toChips); sc = lerp(sc, 0.36, toChips);
+    }
+    const appear = !inFinale && i === 0 ? 1 : prog(t, tileAt[i], tileAt[i] + 0.15);
+    const exit = inFinale ? 0 : prog(t, BEAT.badGuys + 0.2, BEAT.badGuys + 0.4);
+    place($('tile' + i), x, y, sc, Math.min(o, appear, 1 - exit));
+  });
+  if (inFinale) {
+    setTile(0, '✓', '0 failed', true); setTile(1, '✓', '0 errors', true); setTile(2, '✓', '0 errors', true);
+  } else {
+    const flip = a + 0.6, run1 = a + 0.55, run2 = a + 0.85, sent = a + 1.2, fixed1 = a + 1.9, fixed2 = a + 2.2;
+    setTile(0, t < flip ? '0' : '✓', '0 failed', true);
+    setTile(1, t < run1 ? '…' : t < fixed1 ? '2' : '✓', t < run1 ? 'running' : t < sent ? 'errors' : t < fixed1 ? 'errors · sent back' : '0 errors', t < run1 ? null : t >= fixed1);
+    setTile(2, t < run2 ? '…' : t < fixed2 ? '1' : '✓', t < run2 ? 'running' : t < sent ? 'error' : t < fixed2 ? 'error · sent back' : '0 errors', t < run2 ? null : t >= fixed2);
+  }
+  // Tertiary motion: a small loop spins on any tile whose failures were sent back.
+  [1, 2].forEach(i => {
+    const sentBack = !inFinale && t >= a + 1.2 && t < (i === 1 ? a + 1.9 : a + 2.2);
+    const sp = $('t' + i + 'spin');
+    sp.style.opacity = sentBack ? 1 : 0;
+    sp.style.transform = `rotate(${t * 420}deg)`;
+  });
+}
+let chipOffsets = null;   // chip centres relative to the question card centre, measured once from layout
+function questionChipCentre(i, t) {
+  const card = $('question');
+  if (!chipOffsets) {
+    const prevTransform = card.style.transform, prevDisplay = card.style.display;
+    card.style.display = ''; card.style.transform = 'none';
+    const cr = card.getBoundingClientRect();
+    chipOffsets = [...card.querySelectorAll('.chk')].map(c => {
+      const r = c.getBoundingClientRect();
+      return [(r.left + r.right) / 2 - (cr.left + cr.right) / 2, (r.top + r.bottom) / 2 - (cr.top + cr.bottom) / 2];
+    });
+    card.style.transform = prevTransform; card.style.display = prevDisplay;
+  }
+  const q = questionPose(t);
+  return [q.x + chipOffsets[i][0] * q.s, q.y + chipOffsets[i][1] * q.s];
+}
+
+// ---------- Bad Guys, All Is Lost, Dark Night ----------
+const QUESTION_SCALE = 1.1;
+function questionPose(t) {
+  const k = easeOut(prog(t, BEAT.badGuys, BEAT.badGuys + 0.5));
+  const drift = 1 + 0.06 * prog(t, BEAT.badGuys, BEAT.darkNight);
+  return { x: 960, y: lerp(600, 560, k) - 40 * smoother(prog(t, BEAT.allLost, BEAT.allLost + 0.5)), s: QUESTION_SCALE * drift * lerp(0.96, 1, k) };
+}
+function question(t) {
+  const o = win(t, BEAT.badGuys + 0.05, BEAT.darkNight + 0.05, 0.3, 0.3);
+  const q = questionPose(t);
+  place($('question'), q.x, q.y, q.s, o);
+  $('question').querySelector('.row').style.opacity = prog(t, BEAT.badGuys + 0.3, BEAT.badGuys + 0.4);
+  // The session stops once checks pass: a real "Session stopped" pill above the card.
+  const po = win(t, BEAT.allLost + 0.2, BEAT.darkNight + 0.05, 0.25, 0.3);
+  const pill = $('pill');
+  if (po > 0) {
+    pill.style.display = ''; pill.style.opacity = po;
+    pill.style.background = ''; pill.style.color = '';
+    pill.style.transform = `translate(960px, ${230 - 20 * prog(t, BEAT.allLost, BEAT.breakThree)}px) translate(-50%, -50%) scale(1.5)`;
+  }
+}
+
+// ---------- Break into Three: the phone ----------
+const REPLY_TEXT = 'Keep it. Clients first. Add a deprecation warning.';
+function phone(t) {
+  const enter = easeOut(prog(t, BEAT.breakThree, BEAT.breakThree + 0.6));
+  const toSide = smoother(prog(t, BEAT.finale, BEAT.finale + 0.7));
+  const leave = smoother(prog(t, BEAT.finale + 1.1, BEAT.finale + 1.9));
+  const x = lerp(lerp(560, 540, enter), 330, toSide) - 700 * leave;
+  const y = lerp(1300, 575, enter) + 10 * prog(t, BEAT.breakThree, BEAT.finale);
+  const s = lerp(0.94, 0.72, toSide);
+  const o = t >= BEAT.breakThree ? 1 - leave : 0;
+  place($('phone'), x, y, s, o);
+  if (o <= 0) return;
+  const notifK = easeOutBack(prog(t, BEAT.breakThree + 0.45, BEAT.breakThree + 0.85));
+  $('notif').style.opacity = prog(t, BEAT.breakThree + 0.45, BEAT.breakThree + 0.6);
+  $('notif').style.transform = `translateY(${(1 - notifK) * -40}px) scale(${lerp(0.94, 1, notifK)})`;
+  const replyK = easeOut(prog(t, BEAT.breakThree + 1.2, BEAT.breakThree + 1.6));
+  $('reply').style.opacity = replyK;
+  $('reply').style.transform = `translateY(${(1 - replyK) * 60}px)`;
+  const sentAt = REPLY_SENT;
+  $('replyText').textContent = t < sentAt ? typed(REPLY_TEXT, t, BEAT.breakThree + 1.6, 30) : '';
+  $('replyCaret').style.opacity = t < sentAt && caretOn(t) ? 1 : 0;
+  const tap = 1 - 0.18 * Math.sin(Math.PI * prog(t, sentAt - 0.2, sentAt + 0.05));
+  $('send').style.transform = `scale(${tap})`;
+  $('lockTime').textContent = clockText(kfLinear(t, CLOCK_KEYS)).replace(/ [AP]M$/, '');
+}
+
+function flyingReply(t) {
+  const a = REPLY_SENT, b = BEAT.finale + 1.0;
+  const k = smoother(prog(t, a, b));
+  // From the phone's reply field into the terminal's new input line, arcing under the notification.
+  const FINALE_SCALE = 0.8, REPLY_TEXT_HALF = 250;
+  const from = [540, 575 + 250], to = [1210 + FINALE_SCALE * (lineX(2) + REPLY_TEXT_HALF), 590 + FINALE_SCALE * lineY(2)];
+  const x = lerp(from[0], to[0], k), y = lerp(from[1], to[1], k) + 150 * Math.sin(Math.PI * k);
+  const o = t >= a && t < b ? Math.min(1, prog(t, a, a + 0.1)) * (1 - prog(t, b - 0.12, b)) : 0;
+  place($('fly'), x, y, lerp(1, 0.8, k), o);
+}
+
+// ---------- Mini phone (B story during Fun & Games) ----------
+function miniPhone(t) {
+  const o = win(t, BEAT.bStory, BEAT.midpoint, 0.35, 0.2);
+  const k = easeOut(prog(t, BEAT.bStory, BEAT.bStory + 0.5));
+  place($('miniPhone'), 1600, lerp(1100, 905, k), 1, o);
+  $('miniText').textContent = t < BEAT.bStory + 1.7 ? 'Fixing the last 3 tests.' : 'Tests pass. Running lint.';
+}
+
+// ---------- Captions: big type that carries the theme ----------
+const CAPTIONS = [
+  { a: BEAT.theme + 0.9, b: BEAT.setup + 0.1, text: 'Done should mean done.', x: 960, y: 870 },
+  { a: BEAT.allLost + 0.4, b: BEAT.darkNight + 0.05, text: 'Stopped. With a question.', x: 960, y: 920 },
+  { a: BEAT.darkNight - 0.05, b: BEAT.breakThree + 0.2, html: 'It needs you.<span class="caret bigcaret"></span>', x: 960, y: 540, bare: true, push: 0.12, exitRise: 160 },
+  { a: BEAT.breakThree + 0.7, b: TERM_ENTER_FINALE + 0.1, html: 'Answer from<br>anywhere.', x: 1330, y: 540, bare: true, size: 130, left: 960, exitRise: 60 },
+];
+function captions(t) {
+  const el = $('caption');
+  const c = CAPTIONS.find(c => t >= c.a && t < c.b);
+  if (!c) { el.style.display = 'none'; return; }
+  const content = c.html || c.text;
+  if (el.dataset.text !== content) { el.innerHTML = content; el.dataset.text = content; }
+  el.style.textAlign = c.left ? 'left' : 'center';
+  el.classList.toggle('band', !c.bare);
+  el.style.fontSize = `${c.size || 120}px`;
+  const k = easeOut(prog(t, c.a, c.a + 0.4));
+  const rise = (c.exitRise || 0) * smoother(prog(t, c.b - 0.35, c.b));
+  const y = c.y + (1 - k) * 40 - rise;
+  place(el, c.x, y, 1 + (c.push || 0.03) * prog(t, c.a, c.b), win(t, c.a, c.b, 0.3, 0.2));
+  const caret = el.querySelector('.bigcaret');
+  if (caret) caret.style.opacity = caretOn(t) ? 1 : 0;
+  if (c.left) el.style.transform = `translate(${c.left}px, ${y}px) translate(0, -50%) scale(${1 + 0.02 * prog(t, c.a, c.b)})`;
+  el.style.transformOrigin = c.left ? 'left center' : '';
+}
+
+// ---------- End card ----------
+function endCard(t) {
+  const o = prog(t, BEAT.endCard + 0.5, BEAT.endCard + 1.0);
+  const el = $('endcard');
+  el.style.display = o > 0 ? '' : 'none';
+  el.style.opacity = o;
+  if (o <= 0) return;
+  const drift = 1 + 0.06 * prog(t, BEAT.endCard, FILM_SECONDS);
+  el.style.transform = `scale(${drift})`;
+  el.style.transformOrigin = '960px 540px';
+  const rise = i => easeOut(prog(t, BEAT.endCard + 0.6 + i * 0.18, BEAT.endCard + 1.2 + i * 0.18));
+  const orbIn = easeOut(prog(t, BEAT.endCard + 0.7, BEAT.endCard + 1.2));
+  place($('endLogo'), 960, END_ORB_Y, lerp(0.5, 1, orbIn), orbIn, 25 * prog(t, BEAT.endCard, FILM_SECONDS));
+  const sheen = prog(t, BEAT.endCard + 1.4, FILM_SECONDS - 0.4);
+  const band = sheen * 140;
+  $('endUrl').style.backgroundImage = `linear-gradient(100deg, oklch(16% 0.02 280) ${band - 30}%, oklch(52% 0.12 292) ${band - 15}%, oklch(16% 0.02 280) ${band}%)`;
+  place($('endWord'), 960, lerp(430, 410, rise(1)), 1, rise(1));
+  place($('endUrl'), 960, lerp(610, 580, rise(2)), 1, rise(2));
+  place($('endLine'), 960, lerp(770, 750, rise(3)), 1, rise(3));
+  place($('endSmall'), 960, lerp(850, 830, rise(4)), 1, rise(4));
+}
+
+// ---------- Global chrome ----------
+function chrome(t, dawn) {
+  $('clockTime').textContent = clockText(kf(t, CLOCK_KEYS.slice(-2)) && t > BEAT.finalImage ? kf(t, CLOCK_KEYS.slice(-2)) : kfLinear(t, CLOCK_KEYS));
+  const isDay = t > BEAT.finalImage + 1.8;
+  const icon = isDay ? 'sun' : 'moon';
+  if ($('clockIcon').dataset.icon !== icon) { $('clockIcon').innerHTML = isDay ? SUN : MOON; $('clockIcon').dataset.icon = icon; }
+  const note = t < BEAT.setup ? '· shipping tonight' : t < BEAT.bStory ? '' : t < BEAT.darkNight ? '· you went to bed' : t < BEAT.finale ? '' : t < BEAT.finalImage + 1.8 ? '· back to sleep' : '· good morning';
+  $('clockNote').textContent = note;
+  const clock = $('clock');
+  clock.style.color = `oklch(${lerp(95, 22, dawn)}% 0.01 270)`;
+  clock.style.background = `oklch(${lerp(22, 99, dawn)}% 0.012 ${lerp(268, 80, dawn)} / 0.72)`;
+  clock.style.borderColor = `oklch(${lerp(38, 84, dawn)}% 0.012 270 / 0.7)`;
+  $('clockNote').style.color = `oklch(${lerp(70, 45, dawn)}% 0.01 270)`;
+  clock.style.opacity = 1 - prog(t, BEAT.endCard + 0.3, BEAT.endCard + 0.7);
+  $('label').style.color = `oklch(${lerp(64, 46, dawn)}% 0.01 270)`;
+  // Dark Night: the room goes almost black but the ring and caret keep breathing.
+  $('dark').style.opacity = 0.45 * win(t, BEAT.darkNight, BEAT.breakThree + 0.2, 0.35, 0.3);
+  const camScale = 1 + 0.012 * Math.sin((t / FILM_SECONDS) * Math.PI);
+  $('cam').style.transform = `scale(${camScale})`;
+}
+
+// ---------- The one entry point: render(t) ----------
+window.render = function (t) {
+  const dawn = background(t);
+  const rs = ring(t);
+  terminal(t);
+  setup(t);
+  breakTwo(t);
+  orb(t, rs);
+  stations(t, rs);
+  checkTiles(t);
+  question(t);
+  miniPhone(t);
+  phone(t);
+  flyingReply(t);
+  captions(t);
+  endCard(t);
+  chrome(t, dawn);
+};
+buildBubbles();
+window.ready = Promise.all([document.fonts.ready, ...[...document.images].map(i => i.decode().catch(() => {}))]).then(() => render(0));
+const q = new URLSearchParams(location.search).get('t');
+if (q !== null) window.ready.then(() => render(Number(q)));
+</script>
+</body>
+</html>
