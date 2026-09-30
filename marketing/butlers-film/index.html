@@ -10,11 +10,16 @@
 <div id="stage"></div>
 <svg width="0" height="0" style="position:absolute">
   <defs>
+    <filter id="soft-shadow" x="-50%" y="-200%" width="200%" height="500%"><feGaussianBlur stdDeviation="6"/></filter>
+    <filter id="fg-blur" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="2.5"/></filter>
     <filter id="whip-blur" x="-20%" y="-5%" width="140%" height="110%">
       <feGaussianBlur id="whip-blur-amount" stdDeviation="0 0"/>
     </filter>
   </defs>
 </svg>
+<script src="rig.js"></script>
+<script src="characters.js"></script>
+<script src="room.js"></script>
 <script src="film.js"></script>
 </body>
 </html>

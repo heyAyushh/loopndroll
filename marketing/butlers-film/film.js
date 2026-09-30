@@ -85,225 +85,11 @@ const CHAPTERS = [
 ];
 const CHAPTER_HOLD = 1.9;
 
-const CARDS = {
-  codex: ['ALL DONE,', 'SIR.'],
-  claude: ['SIR,', 'TABS OR', 'SPACES?'],
-  cursor: ['SHALL I DROP', 'THE PRODUCTION', 'DATABASE?'],
-};
 const BUTLERS = [
   { id: 'codex', name: 'CODEX', x: 780, tie: '#111111', hair: 'part' },
   { id: 'claude', name: 'CLAUDE CODE', x: 1200, tie: '#D97757', hair: 'walrus' },
   { id: 'cursor', name: 'CURSOR', x: 1620, tie: '#5A5F66', hair: 'chops' },
 ];
-
-// ---------------------------------------------------------------- room geometry (one-point perspective)
-const VANISH_Y = 900;
-const FLOOR_SPAN = 600;          // floor y = VANISH_Y + FLOOR_SPAN * depthScale
-const BUTLER_DEPTH = 1.2333;     // depth scale where characters are drawn at 1:1
-const BACK_WALL = { left: 500, right: 1900, top: 260, bottom: 1500 };
-const depthAt = feetY => (feetY - VANISH_Y) / FLOOR_SPAN;
-const scaleAt = feetY => depthAt(feetY) / BUTLER_DEPTH;
-const BUTLER_FEET_Y = 1640;
-const DESK = { left: 950, right: 1450, top: 1880, front: 2090 };
-const DEV_HOME = { x: 1200, feetY: 2060 };
-const FRIEND_MARK = { x: 1640, feetY: 1990 };
-const DOOR = { nearDepth: 1.43, farDepth: 1.13, heightRatio: 0.56 };
-
-function rightWallPoint(depth, heightRatio) {
-  const floorY = VANISH_Y + FLOOR_SPAN * depth;
-  const ceilingY = VANISH_Y - 640 * depth;
-  return [1200 + 700 * depth, lerp(floorY, ceilingY, heightRatio)];
-}
-const pts = list => list.map(p => p.join(',')).join(' ');
-
-function roomBackdropSVG() {
-  const parts = [];
-  // ceiling, side walls, back wall
-  parts.push(`<polygon points="-400,-300 2800,-300 1900,260 500,260" fill="${C.ceiling}"/>`);
-  for (let i = 1; i < 6; i++) { const y = 260 - i * 95; const k = (900 - y) / 640; parts.push(`<line x1="${1200 - 700 * k}" y1="${y}" x2="${1200 + 700 * k}" y2="${y}" stroke="#E2C6A8" stroke-width="5"/>`); }
-  parts.push(`<polygon points="-400,-450 500,260 500,1500 -400,2700" fill="${C.sideWall}"/>`);
-  parts.push(`<polygon points="2800,-450 1900,260 1900,1500 2800,2700" fill="${C.sideWall}"/>`);
-  // side wainscots
-  const wainscotTop = 1180 / 1500;
-  parts.push(`<polygon points="-400,${lerp(-450, 2700, 0.745)} 500,1180 500,1500 -400,2700" fill="${C.sideWainscot}"/>`);
-  parts.push(`<polygon points="2800,${lerp(-450, 2700, 0.745)} 1900,1180 1900,1500 2800,2700" fill="${C.sideWainscot}"/>`);
-  void wainscotTop;
-  parts.push(`<rect x="500" y="260" width="1400" height="1240" fill="${C.wall}"/>`);
-  for (let x = 535; x < 1900; x += 70) parts.push(`<rect x="${x}" y="300" width="14" height="880" fill="${C.wallStripe}"/>`);
-  parts.push(`<rect x="500" y="260" width="1400" height="46" fill="${C.cornice}"/><rect x="500" y="306" width="1400" height="10" fill="#DCC3A0"/>`);
-  parts.push(`<rect x="500" y="1180" width="1400" height="320" fill="${C.wainscot}"/><rect x="500" y="1172" width="1400" height="14" fill="${C.cornice}"/>`);
-  for (let i = 0; i < 7; i++) parts.push(`<rect x="${530 + i * 196}" y="1225" width="170" height="235" fill="none" stroke="${C.wainscotPanel}" stroke-width="8"/>`);
-  parts.push('<g transform="translate(0,140)">');
-  // paintings: a rubber duck and a single semicolon, in gold frames
-  parts.push(framedPainting(620, 420, 260, 330, duckPainting()));
-  parts.push(framedPainting(1520, 420, 260, 330, `<rect width="260" height="330" fill="#E7EFE6"/><text x="130" y="232" font-family="Didot, serif" font-size="230" text-anchor="middle" fill="#2B3F5C">;</text>`));
-  // wall clock with pendulum case
-  parts.push(`<rect x="1150" y="560" width="100" height="330" rx="12" fill="${C.wood}" stroke="${C.goldDark}" stroke-width="6"/><rect x="1168" y="600" width="64" height="270" rx="8" fill="#3E2119"/>`);
-  parts.push(`<g id="pendulum"><line x1="1200" y1="600" x2="1200" y2="820" stroke="${C.gold}" stroke-width="6"/><circle cx="1200" cy="830" r="22" fill="${C.gold}" stroke="${C.goldDark}" stroke-width="4"/></g>`);
-  parts.push(`<circle cx="1200" cy="470" r="128" fill="${C.gold}"/><circle cx="1200" cy="470" r="112" fill="#FBF3E1" stroke="${C.goldDark}" stroke-width="4"/>`);
-  for (let i = 0; i < 12; i++) { const a = i / 12 * Math.PI * 2; parts.push(`<line x1="${1200 + Math.sin(a) * 92}" y1="${470 - Math.cos(a) * 92}" x2="${1200 + Math.sin(a) * 104}" y2="${470 - Math.cos(a) * 104}" stroke="${C.ink}" stroke-width="${i % 3 ? 4 : 8}"/>`); }
-  parts.push(`<line id="clock-hour" x1="1200" y1="470" x2="1200" y2="410" stroke="${C.ink}" stroke-width="10" stroke-linecap="round"/>`);
-  parts.push(`<line id="clock-minute" x1="1200" y1="470" x2="1200" y2="382" stroke="${C.ink}" stroke-width="6" stroke-linecap="round"/><circle cx="1200" cy="470" r="9" fill="${C.ink}"/>`);
-  parts.push('</g>');
-  // floor: checker tiles in perspective
-  parts.push(`<polygon points="500,1500 1900,1500 2800,2700 -400,2700" fill="${C.floorA}"/>`);
-  const rows = [1, 1.2, 1.44, 1.73, 2.07, 2.49, 2.99];
-  for (let r = 0; r < rows.length - 1; r++) {
-    for (let c = -14; c < 14; c++) {
-      if ((r + c) % 2 === 0) continue;
-      const u0 = c * 140, u1 = (c + 1) * 140, s0 = rows[r], s1 = rows[r + 1];
-      parts.push(`<polygon points="${pts([[1200 + s0 * u0, VANISH_Y + FLOOR_SPAN * s0], [1200 + s0 * u1, VANISH_Y + FLOOR_SPAN * s0], [1200 + s1 * u1, VANISH_Y + FLOOR_SPAN * s1], [1200 + s1 * u0, VANISH_Y + FLOOR_SPAN * s1]])}" fill="${C.floorB}"/>`);
-    }
-  }
-  // oval rug under the desk
-  parts.push(`<ellipse cx="1200" cy="2050" rx="560" ry="150" fill="#7C2935"/><ellipse cx="1200" cy="2050" rx="520" ry="126" fill="none" stroke="${C.gold}" stroke-width="8"/>`);
-  // door on the right wall, the sunlight behind it, and the light wedge on the floor
-  const doorFrame = [rightWallPoint(DOOR.farDepth, 0), rightWallPoint(DOOR.nearDepth, 0), rightWallPoint(DOOR.nearDepth, DOOR.heightRatio), rightWallPoint(DOOR.farDepth, DOOR.heightRatio)];
-  parts.push(`<polygon points="${pts(doorFrame)}" fill="#FFF5CF" stroke="${C.cornice}" stroke-width="22"/>`);
-  parts.push(`<polygon id="door-sky" points="${pts(doorFrame)}" fill="#9FD6E3"/>`);
-  parts.push(`<polygon id="door-light" points="" fill="#FFF3C0" opacity="0"/>`);
-  parts.push(`<polygon id="door-leaf" points="${pts(doorFrame)}" fill="#2F6E6B" stroke="#24524F" stroke-width="6"/>`);
-  return parts.join('');
-}
-
-function framedPainting(x, y, w, h, inner) {
-  return `<g transform="translate(${x},${y})"><rect x="-22" y="-22" width="${w + 44}" height="${h + 44}" fill="${C.gold}" stroke="${C.goldDark}" stroke-width="6"/>
-    <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${inner}</svg></g>`;
-}
-function duckPainting() {
-  return `<rect width="260" height="330" fill="#DDEBF0"/><ellipse cx="130" cy="265" rx="110" ry="22" fill="#9CC3D1"/>
-    <ellipse cx="135" cy="215" rx="82" ry="55" fill="#F4C542"/><circle cx="92" cy="140" r="46" fill="#F4C542"/>
-    <path d="M48,140 L18,150 L48,160 Z" fill="#E9803A"/><circle cx="84" cy="128" r="7" fill="#222"/>`;
-}
-
-// ---------------------------------------------------------------- characters (person units: feet at 0,0, ~620 tall)
-function cardSVG(lines, id) {
-  const lineHeight = 15;
-  const top = -34 - (lines.length - 1) * lineHeight / 2 + 4;
-  const text = lines.map((l, i) => `<tspan x="0" y="${top + i * lineHeight}">${l}</tspan>`).join('');
-  return `<g id="${id || ''}"><polygon points="-58,0 58,0 52,-72 -52,-72" fill="#EDE6D6"/><rect x="-56" y="-74" width="112" height="70" fill="#FFFDF6" stroke="#B9AE98" stroke-width="2"/>
-    <text font-family="'Courier New', monospace" font-weight="700" font-size="12.5" fill="#2A2320" text-anchor="middle">${text}</text></g>`;
-}
-
-function butlerHead(variant) {
-  const face = `<rect x="-17" y="-506" width="34" height="30" fill="${C.skinShade}"/>
-    <ellipse cx="-48" cy="-542" rx="10" ry="16" fill="${C.skin}"/><ellipse cx="48" cy="-542" rx="10" ry="16" fill="${C.skin}"/>
-    <ellipse cx="0" cy="-545" rx="47" ry="58" fill="${C.skin}"/>`;
-  const eyes = `<g class="eyes"><ellipse cx="-17" cy="-548" rx="4.5" ry="4.5" fill="#1d1a1a"/><ellipse cx="17" cy="-548" rx="4.5" ry="4.5" fill="#1d1a1a"/></g>
-    <line x1="-27" y1="-558" x2="-8" y2="-558" stroke="#3a2a22" stroke-width="4"/><line x1="8" y1="-558" x2="27" y2="-558" stroke="#3a2a22" stroke-width="4"/>
-    <path d="M0,-545 L-6,-527 L4,-527" fill="none" stroke="${C.skinShade}" stroke-width="3"/>`;
-  const hair = {
-    part: `<path d="M-48,-560 Q-50,-612 0,-608 Q46,-606 48,-566 L40,-582 Q10,-596 -14,-590 L-22,-600 Q-40,-590 -48,-560 Z" fill="#8E8E90"/><line x1="-14" y1="-592" x2="-20" y2="-604" stroke="#D8D2CC" stroke-width="3"/>
-       <line x1="-10" y1="-512" x2="10" y2="-512" stroke="#8a4f3f" stroke-width="3"/>`,
-    walrus: `<path d="M-49,-548 Q-52,-582 -38,-590 L-40,-560 Z M49,-548 Q52,-582 38,-590 L40,-560 Z" fill="#CFCACA"/>
-       <path d="M-34,-522 Q-18,-532 0,-524 Q18,-532 34,-522 Q30,-500 14,-508 Q0,-500 -14,-508 Q-30,-500 -34,-522 Z" fill="#D8D4D2"/>`,
-    chops: `<path d="M-48,-566 Q-44,-614 0,-612 Q44,-614 48,-566 Q30,-592 0,-590 Q-30,-592 -48,-566 Z" fill="#B8612E"/>
-       <path d="M-47,-560 L-44,-506 Q-34,-496 -26,-516 L-36,-560 Z M47,-560 L44,-506 Q34,-496 26,-516 L36,-560 Z" fill="#B8612E"/>
-       <line x1="-10" y1="-513" x2="10" y2="-513" stroke="#8a4f3f" stroke-width="3"/>`,
-  }[variant];
-  return face + eyes + hair;
-}
-
-function butlerSVG(butler) {
-  const id = butler.id;
-  const plateWidth = butler.name.length > 8 ? 176 : 128;
-  const plateFont = butler.name.length > 8 ? 17 : 20;
-  return `<g id="${id}">
-    <ellipse cx="0" cy="0" rx="78" ry="14" fill="rgba(60,20,30,0.22)"/>
-    <g id="${id}-legL"><rect x="-40" y="-262" width="33" height="256" fill="${C.trouser}"/><ellipse cx="-27" cy="-6" rx="31" ry="10" fill="#0e0c0e"/></g>
-    <g id="${id}-legR"><rect x="7" y="-262" width="33" height="256" fill="${C.trouser}"/><ellipse cx="27" cy="-6" rx="31" ry="10" fill="#0e0c0e"/></g>
-    <g id="${id}-upper">
-      <path d="M-78,-486 L78,-486 L88,-250 L66,-170 L26,-246 L-26,-246 L-66,-170 L-88,-250 Z" fill="${C.coat}"/>
-      <path d="M-30,-486 L-42,-300 L0,-280 L42,-300 L30,-486 Z" fill="${C.waist}"/>
-      <circle cx="0" cy="-360" r="4" fill="${C.goldDark}"/><circle cx="0" cy="-330" r="4" fill="${C.goldDark}"/>
-      <path d="M-30,-486 L30,-486 L0,-392 Z" fill="${C.shirt}"/>
-      <path d="M-30,-486 L-58,-486 L-24,-360 Z M30,-486 L58,-486 L24,-360 Z" fill="${C.coatDark}"/>
-      <path d="M0,-480 L-22,-492 L-22,-468 Z M0,-480 L22,-492 L22,-468 Z" fill="${butler.tie}"/><circle cx="0" cy="-480" r="5" fill="${butler.tie}"/>
-      <g transform="translate(0,-440)"><rect x="${-plateWidth / 2}" y="-15" width="${plateWidth}" height="30" rx="3" fill="${C.gold}" stroke="${C.goldDark}" stroke-width="2.5"/>
-        <text y="7" font-family="Futura, sans-serif" font-weight="700" font-size="${plateFont}" letter-spacing="1.5" text-anchor="middle" fill="#3B2A0C">${butler.name}</text></g>
-      <g id="${id}-head">${butlerHead(butler.hair)}</g>
-      <path d="M-80,-478 Q-104,-400 -62,-338" fill="none" stroke="${C.coat}" stroke-width="30" stroke-linecap="round"/>
-      <path d="M80,-478 Q104,-400 62,-338" fill="none" stroke="${C.coat}" stroke-width="30" stroke-linecap="round"/>
-      <g id="${id}-tray">
-        <ellipse cx="0" cy="-334" rx="98" ry="15" fill="#A9A9AD"/><ellipse cx="0" cy="-338" rx="98" ry="15" fill="#DCDCE0" stroke="#9A9AA0" stroke-width="2"/>
-        <g transform="translate(0,-340)">${cardSVG(CARDS[butler.cardKey || id], id + '-card')}</g>
-      </g>
-      <circle cx="-62" cy="-336" r="17" fill="${C.glove}" stroke="#ddd" stroke-width="2"/><circle cx="62" cy="-336" r="17" fill="${C.glove}" stroke="#ddd" stroke-width="2"/>
-    </g>
-  </g>`;
-}
-
-function developerSVG() {
-  return `<g id="dev">
-    <ellipse cx="0" cy="0" rx="80" ry="13" fill="rgba(60,20,30,0.2)"/>
-    <g id="dev-legL"><rect x="-44" y="-252" width="38" height="236" rx="10" fill="${C.jeans}"/><rect x="-46" y="-26" width="44" height="26" rx="10" fill="#F2A7B8"/></g>
-    <g id="dev-legR"><rect x="6" y="-252" width="38" height="236" rx="10" fill="${C.jeans}"/><rect x="2" y="-26" width="44" height="26" rx="10" fill="#F4D35E"/></g>
-    <path d="M-86,-430 Q-92,-300 -70,-236 L70,-236 Q92,-300 86,-430 Q60,-458 0,-460 Q-60,-458 -86,-430 Z" fill="${C.hoodie}"/>
-    <path d="M-40,-300 L40,-300 L34,-262 L-34,-262 Z" fill="${C.hoodieDark}"/>
-    <line x1="-14" y1="-452" x2="-18" y2="-370" stroke="#EEE" stroke-width="4"/><line x1="14" y1="-452" x2="18" y2="-370" stroke="#EEE" stroke-width="4"/>
-    <g id="dev-armL"><path d="M-80,-420 Q-110,-340 -80,-300" fill="none" stroke="${C.hoodie}" stroke-width="30" stroke-linecap="round"/><circle cx="-80" cy="-298" r="15" fill="${C.devSkin}"/></g>
-    <g id="dev-armR"><path d="M80,-420 Q110,-340 80,-300" fill="none" stroke="${C.hoodie}" stroke-width="30" stroke-linecap="round"/><circle cx="80" cy="-298" r="15" fill="${C.devSkin}"/></g>
-    <g id="dev-head">
-      <path d="M-58,-470 Q-62,-420 -40,-440 L40,-440 Q62,-420 58,-470 Q40,-450 0,-452 Q-40,-450 -58,-470 Z" fill="${C.hoodieDark}"/>
-      <ellipse cx="0" cy="-500" rx="50" ry="58" fill="${C.devSkin}"/>
-      <path d="M-52,-512 L-58,-548 L-40,-538 L-38,-574 L-18,-552 L-8,-590 L6,-556 L24,-584 L28,-548 L50,-566 L46,-532 L56,-514 Q30,-556 0,-552 Q-30,-556 -52,-512 Z" fill="#4A3526"/>
-      <path d="M-34,-484 Q-20,-474 -6,-484 M6,-484 Q20,-474 34,-484" fill="none" stroke="#9B84A8" stroke-width="5"/>
-      <circle cx="-20" cy="-503" r="15" fill="#FFFFFF" stroke="#C9C1AA" stroke-width="2"/><circle cx="20" cy="-503" r="15" fill="#FFFFFF" stroke="#C9C1AA" stroke-width="2"/>
-      <g id="dev-pupils"><circle cx="-20" cy="-503" r="3.6" fill="#141414"/><circle cx="20" cy="-503" r="3.6" fill="#141414"/></g>
-      <line id="dev-mouth" x1="-12" y1="-466" x2="12" y2="-466" stroke="#7B5B4A" stroke-width="4" stroke-linecap="round"/>
-      ${Array.from({ length: 26 }, (_, i) => `<circle cx="${-34 + seeded(i) * 68}" cy="${-470 + seeded(i + 40) * 22}" r="1.8" fill="#8C8270"/>`).join('')}
-    </g>
-  </g>`;
-}
-
-function friendSVG() {
-  const flowers = Array.from({ length: 14 }, (_, i) => `<circle cx="${-60 + seeded(i + 90) * 120}" cy="${-460 + seeded(i + 120) * 200}" r="${7 + seeded(i + 7) * 5}" fill="${i % 3 ? '#FFF1DC' : '#F7CF58'}"/>`).join('');
-  return `<g id="friend">
-    <ellipse cx="0" cy="0" rx="74" ry="13" fill="rgba(60,20,30,0.2)"/>
-    <g id="friend-legL"><rect x="-38" y="-250" width="30" height="240" rx="12" fill="${C.tan}"/><rect x="-46" y="-12" width="44" height="12" rx="5" fill="#7B4B2A"/></g>
-    <g id="friend-legR"><rect x="8" y="-250" width="30" height="240" rx="12" fill="${C.tan}"/><rect x="2" y="-12" width="44" height="12" rx="5" fill="#7B4B2A"/></g>
-    <path d="M-62,-300 L62,-300 L66,-176 L6,-176 L0,-200 L-6,-176 L-66,-176 Z" fill="${C.shorts}"/>
-    <path d="M-80,-470 Q-86,-360 -66,-290 L66,-290 Q86,-360 80,-470 Q56,-492 0,-494 Q-56,-492 -80,-470 Z" fill="${C.shirtCoral}"/>
-    <clipPath id="shirt-clip"><path d="M-80,-470 Q-86,-360 -66,-290 L66,-290 Q86,-360 80,-470 Q56,-492 0,-494 Q-56,-492 -80,-470 Z"/></clipPath>
-    <g clip-path="url(#shirt-clip)">${flowers}</g>
-    <path d="M-22,-492 L0,-450 L22,-492" fill="${C.tan}"/>
-    <g id="friend-armL"><path d="M-76,-460 Q-104,-380 -84,-332" fill="none" stroke="${C.tan}" stroke-width="26" stroke-linecap="round"/>
-      <g transform="translate(-86,-340)"><circle r="36" fill="#6E4527"/><circle r="36" fill="none" stroke="#4E2F18" stroke-width="4"/><ellipse cx="-6" cy="-10" rx="12" ry="7" fill="#8B5A34"/>
-        <line x1="6" y1="-30" x2="22" y2="-78" stroke="#F0668A" stroke-width="5"/><path d="M-4,-70 Q20,-100 44,-70 Z" fill="#7FD1C0"/><circle cx="-84" cy="-340" r="0"/></g>
-      <circle cx="-74" cy="-326" r="13" fill="${C.tan}"/></g>
-    <g id="friend-armR"><path id="friend-armR-path" d="M76,-460 Q104,-380 90,-320" fill="none" stroke="${C.tan}" stroke-width="26" stroke-linecap="round"/>
-      <g id="friend-phone"><rect x="-17" y="-34" width="34" height="66" rx="7" fill="#1E1E22"/><rect x="-13" y="-29" width="26" height="56" rx="4" fill="#9ED8E6"/><circle id="friend-phone-glow" r="0" fill="#FFF"/></g>
-      <circle id="friend-hand" cx="90" cy="-320" r="13" fill="${C.tan}"/></g>
-    <g id="friend-head">
-      <ellipse cx="0" cy="-535" rx="48" ry="56" fill="${C.tan}"/>
-      <path d="M-50,-548 Q-54,-604 0,-602 Q54,-604 50,-548 Q40,-580 0,-582 Q-40,-580 -50,-548 Z" fill="#EBCB7A"/>
-      <path d="M-44,-586 L44,-586 L40,-568 L6,-568 L0,-576 L-6,-568 L-40,-568 Z" fill="#1d1d22"/>
-      <ellipse cx="-17" cy="-538" rx="4.5" ry="4.5" fill="#1d1a1a"/><ellipse cx="17" cy="-538" rx="4.5" ry="4.5" fill="#1d1a1a"/>
-      <path d="M-14,-506 Q0,-498 14,-506" fill="none" stroke="#6E3B22" stroke-width="4" stroke-linecap="round"/>
-    </g>
-  </g>`;
-}
-
-function deskSVG() {
-  return `<g id="desk">
-    <polygon points="${DESK.left - 20},${DESK.top} ${DESK.right + 20},${DESK.top} ${DESK.right + 40},${DESK.top + 34} ${DESK.left - 40},${DESK.top + 34}" fill="${C.woodLight}"/>
-    <rect x="${DESK.left - 40}" y="${DESK.top + 34}" width="${DESK.right - DESK.left + 80}" height="${DESK.front - DESK.top - 34}" fill="${C.wood}"/>
-    <rect x="${DESK.left - 10}" y="${DESK.top + 60}" width="210" height="130" fill="none" stroke="${C.woodLight}" stroke-width="6"/>
-    <rect x="${DESK.right - 200}" y="${DESK.top + 60}" width="210" height="130" fill="none" stroke="${C.woodLight}" stroke-width="6"/>
-    <g transform="translate(1200,${DESK.top + 56})"><rect x="-92" y="-28" width="184" height="56" rx="4" fill="${C.gold}" stroke="${C.goldDark}" stroke-width="3"/>
-      <text id="hour-plaque" y="11" font-family="Futura, sans-serif" font-weight="700" font-size="30" letter-spacing="3" text-anchor="middle" fill="#3B2A0C">HOUR 71</text></g>
-    <g transform="translate(1200,${DESK.top + 4})"><rect x="-110" y="-128" width="220" height="130" rx="8" fill="#B9BCC2" stroke="#8E9197" stroke-width="3"/><circle cx="0" cy="-64" r="12" fill="#D6D8DC"/></g>
-    <rect id="laptop-glow" x="1080" y="1640" width="240" height="120" fill="#BFE3FF" opacity="0.0"/>
-    ${Array.from({ length: 6 }, (_, i) => `<g transform="translate(${1010 + (i % 2) * 6},${DESK.top - i * 38})"><rect x="-26" y="-36" width="52" height="36" rx="4" fill="#FFFFFF" stroke="#C9BFAE" stroke-width="2"/><path d="M26,-28 Q42,-20 26,-8" fill="none" stroke="#C9BFAE" stroke-width="5"/></g>`).join('')}
-    ${[[1370, 0], [1410, 0], [1450, 0], [1390, 1], [1430, 1], [1410, 2]].map(([x, row]) => `<g transform="translate(${x},${DESK.top - row * 50})"><rect x="-17" y="-50" width="34" height="50" rx="5" fill="#3FA56B"/><rect x="-17" y="-38" width="34" height="14" fill="#F4E04D"/></g>`).join('')}
-  </g>`;
-}
-
-function chairSVG() {
-  return `<g id="chair"><g id="chair-back"><rect x="-120" y="-380" width="240" height="330" rx="60" fill="#7C2935"/>
-    ${[[-60, -300], [0, -300], [60, -300], [-60, -220], [0, -220], [60, -220], [-60, -140], [0, -140], [60, -140]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="7" fill="#5A1A24"/>`).join('')}</g>
-    <rect x="-100" y="-60" width="200" height="40" rx="14" fill="#6B2230"/></g>`;
-}
 
 // ---------------------------------------------------------------- build DOM
 const stage = document.getElementById('stage');
@@ -314,14 +100,18 @@ const px = n => `${Math.round(n * UNIT)}px`;
 
 stage.innerHTML = `
 <div class="layer" id="room-layer"><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
-  <g id="world">${roomBackdropSVG()}
-    <g id="butler-row">${BUTLERS.map(butlerSVG).join('')}</g>
-    <g id="chair-pos">${chairSVG()}</g>
-    <g id="dev-pos">${developerSVG()}</g>
-    ${deskSVG()}
-    <g id="friend-pos">${friendSVG()}</g>
-    <g id="dev-front-pos"></g>
+  <defs>${guestDoorClipSVG()}${serviceDoorClipSVG()}</defs>
+  <g id="world">${roomShellSVG()}
+    <g id="door-leaf" clip-path="url(#guest-door-clip)"></g>
+    <g id="actors">
+      ${BUTLERS.map(b => `<g id="clip-${b.id}"><g id="pos-${b.id}">${characterSVG(b.id, butlerSpec(b))}</g></g>`).join('')}
+      <g id="pos-chair"><g id="chair-body"></g></g>
+      <g id="clip-dev"><g id="pos-dev">${characterSVG('dev', devSpec('dev'))}</g></g>
+      <g id="pos-desk">${deskSVG()}</g>
+      <g id="clip-friend"><g id="pos-friend">${characterSVG('friend', friendSpec('friend'))}</g></g>
+    </g>
     <g id="flying-cards">${['claude', 'cursor'].map(id => `<g id="fly-${id}">${cardSVG(CARDS[id])}</g>`).join('')}</g>
+    <g id="foreground" filter="url(#fg-blur)">${foregroundSVG()}</g>
     <g id="chandelier">${chandelierSVG()}</g>
   </g>
 </svg></div>
@@ -336,13 +126,6 @@ stage.innerHTML = `
 <div class="layer" id="vignette" style="background:radial-gradient(ellipse at center, rgba(0,0,0,0) 62%, rgba(60,10,25,0.28) 100%);pointer-events:none"></div>
 <div class="layer" id="iris" style="pointer-events:none"></div>
 `;
-
-function chandelierSVG() {
-  const arms = [-1, -0.5, 0, 0.5, 1].map(k => `<path d="M1200,120 Q${1200 + k * 160},170 ${1200 + k * 190},110" fill="none" stroke="${C.gold}" stroke-width="8"/>
-    <rect x="${1200 + k * 190 - 7}" y="72" width="14" height="38" fill="#FFF8E6"/><ellipse cx="${1200 + k * 190}" cy="64" rx="7" ry="12" fill="#FFD36B"/>`).join('');
-  return `<line x1="1200" y1="-400" x2="1200" y2="110" stroke="${C.goldDark}" stroke-width="6"/>${arms}<circle cx="1200" cy="126" r="22" fill="${C.gold}"/>
-    <path d="M1180,146 L1200,190 L1220,146 Z" fill="${C.gold}"/>`;
-}
 
 const $ = id => document.getElementById(id);
 
@@ -367,10 +150,11 @@ function triptychPanel(butler, i) {
     <svg id="tri-svg-${butler.id}" viewBox="${viewBox}" preserveAspectRatio="xMidYMid slice" style="position:absolute;inset:0;width:100%;height:100%">
       <rect x="-400" y="-900" width="800" height="1200" fill="${TRIPTYCH_COLORS[i]}"/>
       <rect x="-400" y="-360" width="800" height="600" fill="rgba(0,0,0,0.04)"/>
-      ${butlerSVG({ ...butler, id: 'tri-' + butler.id, cardKey: butler.id })}
+      ${characterSVG('tri-' + butler.id, butlerSpec({ ...butler, id: 'tri-' + butler.id }, { cardKey: butler.id }))}
     </svg></div>`;
 }
 $('triptych-layer').innerHTML = `<div style="position:absolute;inset:0;background:#F7EEDC;display:flex;flex-direction:${PORTRAIT ? 'column' : 'row'}">${BUTLERS.map(triptychPanel).join('')}</div>`;
+BUTLERS.forEach(b => applyPose('tri-' + b.id, 'front', { ...STAND, ...TRAY_HOLD }));
 
 // ---------------------------------------------------------------- diagram
 const DIAGRAM_INSET = PORTRAIT ? 50 : 44;
@@ -404,7 +188,7 @@ function inspectionSVG() {
   const L = FIG_LAYOUT;
   return `<svg viewBox="${L.viewBox}" width="100%" height="100%">
     <g transform="translate(${L.card[0]},${L.card[1]}) scale(2.6)">${cardSVG(CARDS.codex)}</g>
-    <g id="inspect-butler" transform="translate(-900,${L.butlerY}) scale(${L.butlerScale})">${butlerSVG({ id: 'fig-codex', name: 'CODEX', tie: '#111', hair: 'part', cardKey: 'codex' })}</g>
+    <g id="inspect-butler" transform="translate(-900,${L.butlerY}) scale(${L.butlerScale})">${characterSVG('figc', butlerSpec({ id: 'figc', name: 'CODEX', tie: '#111', hair: 'part' }, { cardKey: 'codex' }))}</g>
     <g id="typewriter" transform="translate(${L.typewriter[0]},${L.typewriter[1]})"><rect x="-80" y="-60" width="160" height="60" rx="10" fill="#3A3A40"/><rect x="-60" y="-110" width="120" height="56" fill="#FFFDF6" stroke="${C.ink}" stroke-width="2"/></g>
     <g id="magnifier"><circle r="70" fill="rgba(200,230,255,0.35)" stroke="${C.ink}" stroke-width="10"/><line x1="50" y1="50" x2="120" y2="120" stroke="${C.ink}" stroke-width="18" stroke-linecap="round"/></g>
     <g transform="translate(${L.report[0]},${L.report[1]})"><rect width="400" height="330" rx="14" fill="#FFFFFF" stroke="${C.ink}" stroke-width="4"/>
@@ -521,7 +305,7 @@ function exteriorSVG() {
     ${[0, 1, 2, 3].map(i => `<rect y="${horizon + i * H * 0.03}" width="${W}" height="${H * 0.03}" fill="${['#4F9DB0', '#63AEBF', '#7ABFCB', '#95CFD5'][i]}"/>`).join('')}
     <rect y="${horizon + H * 0.12}" width="${W}" height="${H}" fill="#F2DDB0"/>
     ${huts}
-    <g id="runner">${developerSVG().replace(/id="dev/g, 'id="run')}</g>`;
+    <g id="runner">${characterSVG('run', devSpec('run'))}</g>`;
 }
 
 // ---------------------------------------------------------------- end card
@@ -540,154 +324,206 @@ function setTransform(id, value) { const el = $(id); if (el) el.setAttribute('tr
 function show(id, visible) { $(id).classList.toggle('hidden', !visible); }
 function setOpacity(id, value) { $(id).style.opacity = value; }
 
-/** Walk/march cycle: leg swing angle and vertical bob. */
-function gait(phase, amplitude) {
-  return { swing: Math.sin(phase) * amplitude, bob: -Math.abs(Math.sin(phase)) * amplitude * 0.5 };
-}
 
 // ---------------------------------------------------------------- room scene
-const ROOM_CAMERA = [
-  [4.3, 1200, 1345, 2800, 1300],
-  [12.0, 1200, 1400, 2500, 1200],
-  [14.8, 1200, 1330, 1650, 1150],
-  [15.78, 1200, 1320, 1620, 1140, 'linear'],
-  [15.96, 780, 1225, 480, 420, 'snap'], [17.18, 780, 1218, 455, 400, 'linear'],
-  [17.36, 1200, 1225, 480, 420, 'snap'], [18.58, 1200, 1218, 455, 400, 'linear'],
-  [18.76, 1620, 1225, 480, 420, 'snap'], [19.9, 1620, 1218, 455, 400, 'linear'],
-  [20.08, 1200, 1360, 1900, 1260, 'snap'],
-  [26.2, 1200, 1390, 1720, 1160, 'linear'],
-  [31.8, 1200, 1345, 2800, 1300], [35.6, 1210, 1355, 2700, 1290, 'linear'],
-  [39.8, 1400, 1580, 1500, 1120],
-  [51.5, 1360, 1340, 2500, 1260], [54.7, 1420, 1360, 2200, 1180, 'linear'],
-  [55.4, 1812, 1122, 150, 150, 'in'],
-  [58.9, 1200, 1345, 2800, 1300], [62.3, 1200, 1355, 2700, 1280, 'linear'],
-  [63.9, 1560, 1355, 2700, 1280, 'in'],
+/** [time, x, y, landscape width, portrait width, portrait x offset, ease?] in room screen space. */
+const ROOM_CAMERA_KEYS = () => [
+  [4.3, 1200, 1240, 2900, 1350, 0],
+  [12.0, 1200, 1270, 2500, 1250, 0],
+  [14.8, 1200, 1080, 1550, 1050, 0],
+  [15.78, 1200, 1075, 1520, 1040, 0, 'linear'],
+  [15.96, 816, 955, 430, 390, 0, 'snap'], [17.18, 816, 950, 410, 370, 0, 'linear'],
+  [17.36, 1200, 955, 430, 390, 0, 'snap'], [18.58, 1200, 950, 410, 370, 0, 'linear'],
+  [18.76, 1584, 955, 430, 390, 0, 'snap'], [19.9, 1584, 950, 410, 370, 0, 'linear'],
+  [20.08, 1200, 1150, 1900, 1200, 0, 'snap'], [26.2, 1200, 1170, 1700, 1120, 0, 'linear'],
+  [31.8, 1200, 1240, 2900, 1350, 260], [33.6, 1200, 1240, 2860, 1350, 120, 'inout'], [35.9, 1180, 1250, 2800, 1350, -260, 'inout'],
+  [39.8, 840, 1330, 1750, 1180, 0],
+  [51.5, 1080, 1180, 2500, 1300, -120], [54.7, 1000, 1200, 2300, 1250, -170, 'linear'],
+  [55.4, PHONE_ANCHOR[0], PHONE_ANCHOR[1], 150, 150, 0, 'in'],
+  [58.9, 1200, 1240, 2900, 1350, 0], [61.6, 1220, 1250, 2850, 1340, 60, 'linear'], [62.4, 1300, 1250, 2800, 1330, 250],
+  [63.9, 1700, 1250, 2800, 1330, 450, 'in'],
 ];
+let ROOM_CAMERA = null;
 
-function friendPose(t) {
-  // enters through the right-wall door, walks to the mark by the desk
-  const doorPoint = rightWallPoint((DOOR.farDepth + DOOR.nearDepth) / 2, 0);
-  const walk = EASE.inout(progress(t, 32.4, 35.4));
-  const feetY = lerp(doorPoint[1] + 20, FRIEND_MARK.feetY, walk);
-  const x = lerp(doorPoint[0] - 40, FRIEND_MARK.x, walk);
-  const walking = t > 32.4 && t < 35.4;
-  const raise = Math.max(EASE.inout(progress(t, 39.1, 39.7)), t > 51 && t < 58.9 ? 1 : 0) * (t < 58.9 ? 1 : 0);
-  return { x, feetY, walking, phase: (t - 32.4) * 9, raise, visible: t >= 32.1 };
+const WALK_SPEED = 330;       // world units per second
+const TURN_SECONDS = 0.12;
+
+/** Place an actor standing on the floor (or dais) at world X, Z. */
+function placeActor(id, X, Z, floorY, facing = 1) {
+  const [x, y] = project(X, floorY, Z);
+  const s = personScale(Z);
+  setTransform(id, `translate(${x.toFixed(2)},${y.toFixed(2)}) scale(${(s * facing).toFixed(4)},${s.toFixed(4)})`);
+  return { x, y, s };
 }
 
-/** World position of the friend's phone (anchor for the flying cards and the camera zoom). */
-function phoneWorld(pose) {
-  const sc = scaleAt(pose.feetY);
-  const hand = raisedHand(pose.raise);
-  return [pose.x + hand[0] * sc, pose.feetY + hand[1] * sc];
-}
-function raisedHand(raise) { return [lerp(90, 118, raise), lerp(-320, -590, raise)]; }
-
-function applyFriend(t) {
-  const pose = friendPose(t);
-  show('friend-pos', pose.visible && !(t > 40.2 && t < 51.3));
-  const sc = scaleAt(pose.feetY);
-  const g = pose.walking ? gait(pose.phase, 22) : { swing: 0, bob: 0 };
-  setTransform('friend-pos', `translate(${pose.x},${pose.feetY + g.bob * sc}) scale(${sc})`);
-  setTransform('friend-legL', `rotate(${g.swing},-23,-250)`);
-  setTransform('friend-legR', `rotate(${-g.swing},23,-250)`);
-  const hand = raisedHand(pose.raise);
-  $('friend-armR-path').setAttribute('d', `M76,-460 Q${lerp(104, 140, pose.raise)},${lerp(-380, -520, pose.raise)} ${hand[0]},${hand[1]}`);
-  $('friend-hand').setAttribute('cx', hand[0]); $('friend-hand').setAttribute('cy', hand[1]);
-  setTransform('friend-phone', `translate(${hand[0]},${hand[1] - 24}) scale(${lerp(0.6, 1.2, pose.raise)})`);
-  setOpacity('friend-phone', pose.raise > 0.05 ? 1 : 0);
-  return pose;
+/** Walk along waypoints [[t, X, Z], ...]; returns position, heading and distance walked (for gait phase). */
+function followPath(t, points) {
+  if (t <= points[0][0]) return { X: points[0][1], Z: points[0][2], moving: false, dx: 0, distance: 0 };
+  let distance = 0;
+  for (let i = 1; i < points.length; i++) {
+    const [t0, x0, z0] = points[i - 1], [t1, x1, z1] = points[i];
+    const segment = Math.hypot(x1 - x0, z1 - z0);
+    if (t < t1) {
+      const p = (t - t0) / (t1 - t0);
+      return { X: lerp(x0, x1, p), Z: lerp(z0, z1, p), moving: true, dx: x1 - x0, dz: z1 - z0, distance: distance + segment * p };
+    }
+    distance += segment;
+  }
+  const last = points[points.length - 1];
+  return { X: last[1], Z: last[2], moving: false, dx: 0, distance };
 }
 
-function devPose(t) {
-  const stand = EASE.back(progress(t, 60.9, 61.6));
-  const sidestep = EASE.inout(progress(t, 61.7, 62.2));
-  const run = EASE.in(progress(t, 62.2, 63.5));
-  const x = DEV_HOME.x + sidestep * 330 + run * 1100;
-  const feetY = DEV_HOME.feetY - run * 380;
-  const sink = 330 * (1 - stand);
-  const look = t > 35.2 && t < 40 ? EASE.inout(progress(t, 35.2, 35.6)) * 6 : t > 51.4 && t < 58.9 ? 6 : 0;
-  return { x, feetY, sink, look, running: t > 62.2, runPhase: (t - 62.2) * 16, stand };
+// butler exits: walk along the dais to a service door, turn, walk through it
+const BUTLER_EXITS = {
+  codex: { start: 51.3, door: 'left' },
+  claude: { start: 59.95, door: 'left' },
+  cursor: { start: 59.95, door: 'right' },
+};
+/** Waypoints [[X, Z], ...] walked at a constant speed from `start`, as [[t, X, Z], ...]. */
+function timedPath(start, speed, points) {
+  let t = start;
+  return points.map((p, i) => { if (i > 0) t += Math.hypot(p[0] - points[i - 1][0], p[1] - points[i - 1][1]) / speed; return [t, p[0], p[1]]; });
+}
+function butlerExitPath(id) {
+  const exit = BUTLER_EXITS[id], X0 = MARKS.butlerX[id], X1 = SERVICE_DOORS[exit.door];
+  const alongSeconds = Math.abs(X1 - X0) / WALK_SPEED;
+  const t0 = exit.start + TURN_SECONDS, t1 = t0 + alongSeconds, t2 = t1 + TURN_SECONDS, t3 = t2 + 200 / WALK_SPEED;
+  return { t0, t1, t2, t3, points: [[t0, X0, MARKS.butlerZ], [t1, X1, MARKS.butlerZ], [t2, X1, MARKS.butlerZ], [t3, X1, MARKS.butlerZ + 200]] };
 }
 
-function applyDeveloper(t) {
-  const pose = devPose(t);
-  const sc = scaleAt(pose.feetY) * 1.02;
-  const g = pose.running ? gait(pose.runPhase, 34) : { swing: 0, bob: 0 };
-  setTransform('dev-pos', `translate(${pose.x},${pose.feetY + pose.sink + g.bob * sc}) scale(${sc})`);
-  setTransform('dev-legL', `rotate(${g.swing},-25,-252)`);
-  setTransform('dev-legR', `rotate(${-g.swing},25,-252)`);
-  const legsVisible = pose.stand > 0.6 ? 1 : 0;
-  setOpacity('dev-legL', legsVisible); setOpacity('dev-legR', legsVisible);
-  // typing: tiny hand jitter while seated; running: big arm swing
-  const typing = pose.stand < 0.1 && (t < 31.8 || (t > 58.9 && t < 60.9)) ? Math.sin(t * 38) * 3 : 0;
-  setTransform('dev-armL', pose.running ? `rotate(${-g.swing * 1.4},-80,-420)` : `translate(${typing},0)`);
-  setTransform('dev-armR', pose.running ? `rotate(${g.swing * 1.4},80,-420)` : `translate(${-typing},0)`);
-  // pupils: stare straight, dart to the friend, one slow blink per shot
-  $('dev-pupils').setAttribute('transform', `translate(${pose.look},${t > 60.9 && t < 61.6 ? -3 : 0})`);
-  // the developer is behind the desk until he steps out to the side
-  const inFront = pose.x > DESK.right + 40;
-  const parent = inFront ? $('dev-front-pos') : $('world');
-  const devPos = $('dev-pos');
-  if (inFront && devPos.parentNode !== parent) parent.appendChild(devPos);
-  if (!inFront && devPos.parentNode !== $('world')) $('world').insertBefore(devPos, $('desk'));
-  $('laptop-glow').setAttribute('opacity', 0);
-  return pose;
-}
-
-function applyChair(t) {
-  const sc = scaleAt(DEV_HOME.feetY - 60);
-  const spin = t > 62.3 ? (t - 62.3) * 7 * Math.exp(-(t - 62.3) * 0.25) : 0;
-  const width = Math.cos(spin);
-  setTransform('chair-pos', `translate(${DEV_HOME.x},${DEV_HOME.feetY - 60}) scale(${sc})`);
-  setTransform('chair-back', `scale(${Math.max(0.12, Math.abs(width))},1)`);
-  $('chair-back').querySelector('rect').setAttribute('fill', width < 0 ? '#5E1D28' : '#7C2935');
+function butlerFrame(b, t) {
+  const exit = BUTLER_EXITS[b.id];
+  const blinkAt = { codex: [13.4, 19.7, 37.1], claude: [21.7, 28.0, 45.0], cursor: [24.1, 30.4, 36.2] }[b.id];
+  const blink = blinkAt.some(at => Math.abs(t - at) < 0.08) ? 1 : 0;
+  const breathe = t / 3.1 + b.x;
+  const bow = b.id !== 'codex' && t > 58.9 ? Math.sin(Math.PI * progress(t, 59.0, 59.85)) * 26 : 0;
+  if (t < exit.start) return { X: MARKS.butlerX[b.id], Z: MARKS.butlerZ, view: 'front', pose: { ...STAND, ...TRAY_HOLD }, extra: { blink, breathe, bow } };
+  const path = butlerExitPath(b.id);
+  const pos = followPath(t, path.points);
+  if (t < path.t2) {
+    const facing = Math.sign(SERVICE_DOORS[exit.door] - MARKS.butlerX[b.id]) || 1;
+    const pose = gaitPose(gaitPhase(pos.distance / PERSON_WORLD));
+    pose.armL = [-14, -76, 1];     // near hand carries the tray forward
+    return { X: pos.X, Z: pos.Z, view: 'side', facing, pose, extra: { breathe } };
+  }
+  const phase = gaitPhase(pos.distance / PERSON_WORLD);
+  return { X: pos.X, Z: pos.Z, view: 'back', pose: { ...STAND, liftL: 0.35 * Math.max(0, Math.sin(phase)), liftR: 0.35 * Math.max(0, -Math.sin(phase)) }, extra: {}, clip: pos.Z > MARKS.butlerZ + 90 };
 }
 
 function applyButlers(t) {
-  BUTLERS.forEach((b, i) => {
-    let x = b.x, facing = 1, bow = 0, marchPhase = 0, marching = false;
-    // Codex was sent back to work in the diagram: marches off stage left in the next room shot
-    if (b.id === 'codex' && t > 51.3) { marching = true; marchPhase = (t - 51.3) * 8; x = b.x - EASE.in(progress(t, 51.3, 53.8)) * 900; facing = -1; }
-    // the others bow in unison once answered, then march off to work
-    if (b.id !== 'codex' && t > 58.9) {
-      bow = Math.sin(Math.PI * progress(t, 59.0, 59.9)) * 24;
-      const leave = progress(t, 59.9, 61.4);
-      if (leave > 0) { marching = true; marchPhase = (t - 59.9) * 8; x = b.x + (b.id === 'cursor' ? 1 : -1) * EASE.in(leave) * 1300; facing = b.id === 'cursor' ? 1 : -1; }
-    }
-    const g = marching ? gait(marchPhase, 18) : { swing: 0, bob: 0 };
-    void facing;
-    setTransform(b.id, `translate(${x},${BUTLER_FEET_Y + g.bob}) scale(0.97)`);
-    setTransform(`${b.id}-legL`, `rotate(${g.swing},-23,-262)`);
-    setTransform(`${b.id}-legR`, `rotate(${-g.swing},23,-262)`);
-    setTransform(`${b.id}-upper`, `translate(0,-262) scale(1,${1 - bow * 0.009}) translate(0,262)`);
-    // deadpan blink: one per butler, staggered
-    const blinkAt = [13.4, 21.7, 24.1][i];
-    const blink = Math.abs(t - blinkAt) < 0.07 || Math.abs(t - (blinkAt + 6.3)) < 0.07;
-    $(b.id + '-head').querySelector('.eyes').setAttribute('transform', blink ? `translate(0,-548) scale(1,0.15) translate(0,548)` : '');
+  const depths = {};
+  BUTLERS.forEach(b => {
+    const frame = butlerFrame(b, t);
+    placeActor(`pos-${b.id}`, frame.X, frame.Z, DAIS.top, frame.view === 'side' ? frame.facing : 1);
+    applyPose(b.id, frame.view, frame.pose, frame.extra);
+    $(`clip-${b.id}`).setAttribute('clip-path', frame.clip ? 'url(#service-door-clip)' : '');
+    show(`clip-${b.id}`, frame.Z < MARKS.butlerZ + 199);
+    depths[`clip-${b.id}`] = frame.Z;
   });
-  // question cards leave the trays when they start flying
-  ['claude', 'cursor'].forEach(id => setOpacity(id + '-card', t > CARD_FLIGHTS[id].start && t < 58.9 ? 0 : 1));
-  setOpacity('codex-card', t > 51.3 ? 0 : 1);
+  // question cards leave the trays when they fly; Codex's card went back to work with him
+  ['claude', 'cursor'].forEach(id => {
+    const gone = t > CARD_FLIGHTS[id].start;
+    setOpacity(`${id}-card`, gone ? 0 : 1); setOpacity(`${id}-card-side`, gone ? 0 : 1);
+  });
+  // service doors swing open while a butler passes through
+  ['left', 'right'].forEach(side => {
+    const users = BUTLERS.filter(b => BUTLER_EXITS[b.id].door === side).map(b => butlerExitPath(b.id));
+    const open = Math.max(0, ...users.map(p => Math.min(EASE.out(progress(t, p.t1 - 0.25, p.t1 + 0.05)), 1 - EASE.inout(progress(t, p.t3 + 0.1, p.t3 + 0.45)))));
+    const cx = SERVICE_DOORS[side], hw = SERVICE_DOORS.halfWidth, hinge = side === 'left' ? cx - hw : cx + hw, free = side === 'left' ? cx + hw : cx - hw;
+    const edge = lerp(free, hinge, open * 0.92);
+    $(`service-leaf-${side}`).setAttribute('points', projPoly([[hinge, SERVICE_DOORS.topY, ROOM.back], [edge, SERVICE_DOORS.topY - open * 8, ROOM.back], [edge, DAIS.top + open * 8, ROOM.back], [hinge, DAIS.top, ROOM.back]]));
+  });
+  return depths;
+}
+
+// ---------------------------------------------------------------- friend
+const FRIEND_PATH = timedPath(32.2, 400, [[800, 800], [600, 660], [400, 460], [-360, 440], [MARKS.friend.X, MARKS.friend.Z]]);
+const FRIEND_REST = { armL: [10, -46, 1], armR: [-4, -10, 1] };
+const FRIEND_RAISED = { armL: [10, -46, 1], armR: [-160, -22, 1] };
+function friendFrame(t) {
+  const pos = followPath(t, FRIEND_PATH);
+  const blink = [36.9, 44.0, 57.0].some(at => Math.abs(t - at) < 0.08) ? 1 : 0;
+  if (pos.moving) {
+    const pose = gaitPose(gaitPhase(pos.distance / PERSON_WORLD));
+    return { X: pos.X, Z: pos.Z, view: 'side', facing: -1, pose, extra: {}, clip: pos.X > ROOM.wallX - 10 };
+  }
+  const raise = t < 58.9 ? Math.max(EASE.inout(progress(t, 39.1, 39.7)), t > 51 ? 1 : 0) : 0;
+  const pose = { ...STAND, armL: FRIEND_REST.armL, armR: FRIEND_REST.armR.map((v, i) => lerp(v, FRIEND_RAISED.armR[i], raise)) };
+  return { X: pos.X, Z: pos.Z, view: 'front', facing: 1, pose, extra: { blink, breathe: t / 3.4 }, clip: false };
+}
+/** Screen position of the friend's raised phone (anchor for the flying cards and the zoom into the phone). */
+function friendPhoneScreen(t) {
+  const frame = friendFrame(t);
+  const [x, y] = project(frame.X, ROOM.floor, frame.Z), s = personScale(frame.Z);
+  const [hx, hy] = handPosition('front', 'R', frame.pose);
+  return [x + hx * s, y + (hy - 20) * s];
+}
+const PHONE_ANCHOR = friendPhoneScreen(54.5);
+
+function applyFriend(t) {
+  const frame = friendFrame(t);
+  const visible = t >= 32.2 && !(t > 40.2 && t < 51.3);
+  show('clip-friend', visible);
+  placeActor('pos-friend', frame.X, frame.Z, ROOM.floor, frame.view === 'side' ? frame.facing : 1);
+  applyPose('friend', frame.view, frame.pose, frame.extra);
+  $('clip-friend').setAttribute('clip-path', frame.clip ? 'url(#guest-door-clip)' : '');
+  setOpacity('friend-phone', t > 38.9 && t < 58.9 ? 1 : 0);
+  return { 'clip-friend': frame.Z };
+}
+
+// ---------------------------------------------------------------- developer
+const DEV_SEAT_DROP = 112;                // seated hip height below standing, person units
+const DEV_WALK = [[61.62, MARKS.dev.X, MARKS.dev.Z], [62.35, 400, 660]];
+const DEV_RUN = [[62.35, 400, 660], [63.35, 830, 800]];
+function devFrame(t) {
+  const look = (t > 35.2 && t < 40) || (t > 51.4 && t < 58.9) ? 6 * EASE.inout(progress(t, 35.2, 35.5)) || 6 : 0;
+  const blink = [10.2, 18.9, 29.5, 47.0].some(at => Math.abs(t - at) < 0.08) ? 1 : 0;
+  if (t < 61.62) {
+    const stand = EASE.back(progress(t, 60.9, 61.45));
+    const typing = t < 31.8 || (t > 58.9 && t < 60.9) ? Math.sin(t * 36) * 5 : 0;
+    const pose = { ...STAND, armL: [10, -72 + typing, 0.5], armR: [-10, 72 - typing, 0.5], drop: DEV_SEAT_DROP * (1 - stand) };
+    return { X: MARKS.dev.X, Z: MARKS.dev.Z, view: 'front', facing: 1, pose, extra: { blink, breathe: t / 2.6 }, look, eyesUp: t > 60.9 && t < 61.5 };
+  }
+  const running = t >= 62.35;
+  const pos = followPath(t, running ? DEV_RUN : DEV_WALK);
+  const walked = running ? Math.hypot(400 - MARKS.dev.X, 660 - MARKS.dev.Z) + pos.distance : pos.distance;
+  const pose = gaitPose(gaitPhase(walked / PERSON_WORLD, running), running);
+  return { X: pos.X, Z: pos.Z, view: 'side', facing: 1, pose, extra: {}, look: 0, clip: pos.X > ROOM.wallX - 10 };
+}
+function applyDeveloper(t) {
+  const frame = devFrame(t);
+  placeActor('pos-dev', frame.X, frame.Z, ROOM.floor, 1);
+  applyPose('dev', frame.view, frame.pose, frame.extra);
+  setTransform('dev-look', `translate(${frame.look},${frame.eyesUp ? -3 : 0})`);
+  $('clip-dev').setAttribute('clip-path', frame.clip ? 'url(#guest-door-clip)' : '');
+  show('clip-dev', frame.X < ROOM.wallX + 140);
+  return { 'clip-dev': frame.Z };
+}
+
+function applyChair(t) {
+  const since = Math.max(0, t - 61.75);
+  const spin = (9 / 0.55) * (1 - Math.exp(-0.55 * since));
+  placeActor('pos-chair', MARKS.chair.X, MARKS.chair.Z, ROOM.floor);
+  $('chair-body').innerHTML = chairSVG(spin);
+  return { 'pos-chair': MARKS.chair.Z };
 }
 
 const CARD_FLIGHTS = { claude: { start: 52.0, end: 54.1 }, cursor: { start: 52.5, end: 54.6 } };
-function applyFlyingCards(t, friend) {
-  const target = phoneWorld(friend);
+function applyFlyingCards(t) {
+  const target = friendPhoneScreen(Math.min(Math.max(t, 51.5), 58.8));
   ['claude', 'cursor'].forEach(id => {
     const flight = CARD_FLIGHTS[id];
     const p = progress(t, flight.start, flight.end);
     const flying = t > flight.start && t < flight.end + 0.05 && t < 55.4;
     show('fly-' + id, flying);
     if (!flying) return;
-    const butler = BUTLERS.find(b => b.id === id);
-    const from = [butler.x, BUTLER_FEET_Y - 340 * 0.97];
+    const [bx, by] = project(MARKS.butlerX[id], DAIS.top, MARKS.butlerZ), s = personScale(MARKS.butlerZ);
+    const from = [bx, by - 340 * s];
     const e = EASE.inout(p);
-    // quadratic arc that rises over the room, then dives into the phone
-    const control = [lerp(from[0], target[0], 0.35), Math.min(from[1], target[1]) - 520];
+    const control = [lerp(from[0], target[0], 0.35), Math.min(from[1], target[1]) - 480];
     const x = (1 - e) * (1 - e) * from[0] + 2 * (1 - e) * e * control[0] + e * e * target[0];
     const y = (1 - e) * (1 - e) * from[1] + 2 * (1 - e) * e * control[1] + e * e * target[1];
-    const scale = 0.97 * (1 + Math.sin(Math.PI * e) * 4.2) * lerp(1, 0.28, EASE.in(p));
+    const scale = s * (1 + Math.sin(Math.PI * e) * 4.2) * lerp(1, 0.28, EASE.in(p));
     const spin = Math.sin(Math.PI * e) * (id === 'claude' ? -16 : 14);
     setTransform('fly-' + id, `translate(${x},${y + 36 * scale}) rotate(${spin}) scale(${scale})`);
   });
@@ -700,28 +536,36 @@ function applyClockAndProps(t) {
   setTransform('clock-hour', `rotate(${(9 + minutes / 60) * 30},1200,470)`);
   setTransform('chandelier', `rotate(${Math.sin(t * 0.9) * 0.6},1200,-400)`);
   $('hour-plaque').textContent = t < 31.8 ? 'HOUR 71' : 'HOUR 72';
-  // door: flies open as the friend arrives, stays open, light pours in
-  const open = EASE.snap(progress(t, 31.8, 32.3));
-  const hinge = [rightWallPoint(DOOR.nearDepth, 0), rightWallPoint(DOOR.nearDepth, DOOR.heightRatio)];
-  const farDepth = lerp(DOOR.farDepth, DOOR.nearDepth + 0.25, open);
-  const leaf = [rightWallPoint(farDepth, 0), hinge[0], hinge[1], rightWallPoint(farDepth, DOOR.heightRatio)];
-  if (open > 0) { leaf[0][0] -= open * 90; leaf[3][0] -= open * 90; }
-  $('door-leaf').setAttribute('points', pts(leaf));
-  const sill = [rightWallPoint(DOOR.farDepth, 0), rightWallPoint(DOOR.nearDepth, 0)];
-  $('door-light').setAttribute('points', pts([sill[0], sill[1], [sill[1][0] - 900, sill[1][1] + 520], [sill[0][0] - 1000, sill[0][1] + 180]]));
-  $('door-light').setAttribute('opacity', open * 0.55);
+  // guest door swings outward on its near hinge; sunlight pours in
+  const open = EASE.snap(progress(t, 31.8, 32.35));
+  $('door-leaf').innerHTML = guestDoorLeafSVG(-open * 100);
+  $('door-light').setAttribute('points', doorLightPoints());
+  $('door-light').setAttribute('opacity', open * 0.5);
+}
+
+/** Painter's order: far actors first. Re-append only when the order changes. */
+let lastActorOrder = '';
+function sortActors(depths) {
+  const order = Object.entries(depths).sort((a, b) => b[1] - a[1]).map(([id]) => id);
+  const key = order.join('|');
+  if (key === lastActorOrder) return;
+  const container = $('actors');
+  order.forEach(id => container.appendChild($(id)));
+  lastActorOrder = key;
 }
 
 function applyRoom(t) {
-  const [x, y, wL, wP] = keyed(t, ROOM_CAMERA);
+  ROOM_CAMERA = ROOM_CAMERA || ROOM_CAMERA_KEYS();
+  const [x, y, wL, wP, dxP] = keyed(t, ROOM_CAMERA);
+  const camX = x + (PORTRAIT ? dxP : 0);
   const zoom = W / (PORTRAIT ? wP : wL);
-  setTransform('world', `translate(${W / 2},${H / 2}) scale(${zoom}) translate(${-x},${-y})`);
+  setTransform('world', `translate(${W / 2},${H / 2}) scale(${zoom}) translate(${-camX},${-y})`);
+  // foreground sits nearer the lens than the set, so it slides further as the camera moves
+  setTransform('foreground', `translate(${-(camX - 1200) * 0.35},${-(y - 1240) * 0.25})`);
   applyClockAndProps(t);
-  applyButlers(t);
-  applyChair(t);
-  applyDeveloper(t);
-  const friend = applyFriend(t);
-  applyFlyingCards(t, friend);
+  const depths = { ...applyButlers(t), ...applyChair(t), ...applyDeveloper(t), ...applyFriend(t), 'pos-desk': DESK_BOX.backZ };
+  sortActors(depths);
+  applyFlyingCards(t);
 }
 
 // ---------------------------------------------------------------- triptych scene (26.2 – 31.8)
@@ -736,7 +580,7 @@ function applyTriptych(t) {
     $('tri-svg-' + b.id).style.transform = `scale(${push})`;
     // one mechanical blink per butler
     const blink = Math.abs(t - (27.2 + i * 1.3)) < 0.07;
-    $('tri-' + b.id + '-head').querySelector('.eyes').setAttribute('transform', blink ? 'translate(0,-548) scale(1,0.15) translate(0,548)' : '');
+    applyPose('tri-' + b.id, 'front', { ...STAND, ...TRAY_HOLD }, { blink: blink ? 1 : 0, breathe: t / 3.1 + i });
   });
 }
 
@@ -774,11 +618,15 @@ function applyDiagram(t) {
   // Codex marches in from the left to the typewriter, then types
   const march = EASE.inout(progress(t, 45.9, 47.2));
   const marchX = lerp(-900, FIG_LAYOUT.marchEnd, march);
-  const bob = march > 0 && march < 1 ? -Math.abs(Math.sin((t - 45.9) * 9)) * 10 : 0;
-  const typing = march >= 1 ? Math.sin(t * 40) * 2 : 0;
+  const bob = 0, typing = 0;
   setTransform('inspect-butler', `translate(${marchX},${FIG_LAYOUT.butlerY + bob + typing}) scale(${FIG_LAYOUT.butlerScale})`);
-  setTransform('fig-codex-legL', `rotate(${march > 0 && march < 1 ? Math.sin((t - 45.9) * 9) * 18 : 0},-23,-262)`);
-  setTransform('fig-codex-legR', `rotate(${march > 0 && march < 1 ? -Math.sin((t - 45.9) * 9) * 18 : 0},23,-262)`);
+  if (march < 1) {
+    const pose = march > 0 ? gaitPose(gaitPhase((marchX + 900) / FIG_LAYOUT.butlerScale)) : { ...STAND };
+    pose.armL = [-14, -76, 1];
+    applyPose('figc', 'side', pose);
+  } else {
+    applyPose('figc', 'side', { ...STAND, armL: [-40, -50 + Math.sin(t * 40) * 6, 1], armR: [-30, -60 - Math.sin(t * 40) * 6, 1] });
+  }
   // tests flip to green one by one once he types
   let passing = 0;
   for (let i = 0; i < 4; i++) {
@@ -841,15 +689,10 @@ function applyExterior(t) {
   const run = EASE.out(progress(t, 63.8, 67.6));
   const baseScale = (PORTRAIT ? 1.6 : 1.35) * UNIT;
   const sc = lerp(baseScale, baseScale * 0.28, run);
-  const g = gait((t - 63.8) * 15, 34);
   const x = W / 2 + Math.sin(p * 3) * 20;
   const y = lerp(H * 1.02, H * 0.62, run);
-  setTransform('runner', `translate(${x},${y + g.bob * sc}) scale(${sc})`);
-  setTransform('run-legL', `rotate(${g.swing},-25,-252)`);
-  setTransform('run-legR', `rotate(${-g.swing},25,-252)`);
-  // arms up in triumph
-  setTransform('run-armL', `rotate(${150 + Math.sin(t * 14) * 10},-80,-420)`);
-  setTransform('run-armR', `rotate(${-150 - Math.sin(t * 14) * 10},80,-420)`);
+  setTransform('runner', `translate(${x},${y}) scale(${sc})`);
+  applyPose('run', 'back', jogFrontPose((t - 63.8) * 15));
   setTransform('exterior-world', `translate(${W / 2},${H / 2}) scale(${1.04 - p * 0.04}) translate(${-W / 2},${-H / 2})`);
 }
 

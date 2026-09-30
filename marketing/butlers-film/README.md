@@ -7,6 +7,13 @@ A 75-second deadpan Looper film in two aspect ratios (1920×1080 and 1080×1920)
 Every frame is code-drawn SVG/HTML. `window.seek(t)` in `film.js` sets the whole frame from `t` alone, so any frame
 renders identically in any order.
 
+| File | Role |
+| --- | --- |
+| `rig.js` | Shared character rig: outlined, shaded limbs on hip/knee/shoulder/elbow joints; front/side/back views; walk/run cycles |
+| `characters.js` | The cast (three butlers, the developer, the friend) and the question cards |
+| `room.js` | The drawing room as a 3D set through one camera: dais, doors, desk, swivel chair, foreground, doorway clips |
+| `film.js` | Timeline, scenes, camera, overlays and transitions |
+
 ## Rebuild
 
 ```sh
