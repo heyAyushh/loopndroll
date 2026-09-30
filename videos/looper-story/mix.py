@@ -44,7 +44,7 @@ RING_OUT_LIFT_DB = 8.0
 CROSSFADE_S = 0.08
 END_FADE_S = 0.7
 MIX_TARGET_LUFS = -16.0              # calm, cinematic piece (quality-bar: about -16 LUFS)
-TRUE_PEAK_CEILING_DB = -2.0
+TRUE_PEAK_CEILING_DB = -2.6          # AAC encoding overshoots the limiter by ~0.7 dB
 
 TARGET_DB = 3.5                      # in-band lift of an effect over the music
 WHOOSH_IDS = {'1492'}
@@ -58,8 +58,8 @@ LAP_START, LAP = B(21) + B(1), B(2)
 # [file id, film time, source start, source duration, note]
 FINALE = B(45)
 PLAN = [
-    ('1485', B(7) - 0.25, 0, None, 'first bubble: "keep going, please"'),
-    ('1492', B(12) - 0.4, 0, 0.6, 'the wall collapses'),
+    ('1485', B(7) - 0.02, 0, None, 'first bubble: "keep going, please"'),
+    ('1492', B(12) - 0.35, 0, 0.6, 'the wall collapses', 4.0),
     ('2356', B(12) + 0.6, 0, None, 'Session stopped pill'),
     ('1492', B(14) - 0.35, 0, 0.6, 'the fail line grows into "14 failed"'),
     ('1392', B(16) + 0.15, 1.0, 0.5, 'typing "keep go"'),
@@ -166,7 +166,7 @@ def effects_stem(music):
     mono_music = music.mean(1)
     times = sorted(p[1] for p in PLAN)
     report = []
-    for sfx_id, at, src_start, src_dur, note in PLAN:
+    for sfx_id, at, src_start, src_dur, note, *override in PLAN:
         effect = decode(SFX_DIR / f'mixkit-{sfx_id}.mp3', src_start, src_dur,
                         'highpass=f=170,lowpass=f=10000,afade=t=in:d=0.008')
         fade = min(len(effect), int(0.08 * SR))
@@ -178,7 +178,8 @@ def effects_stem(music):
         window = mono_music[i0:i0 + max(length, int(0.2 * SR))]
         music_in_band = peak_db(sosfilt(band, window))
         effect_in_band = peak_db(sosfilt(band, effect.mean(1)))
-        gain_db = music_in_band + (WHOOSH_TARGET_DB if sfx_id in WHOOSH_IDS else TARGET_DB) - effect_in_band
+        target = override[0] if override else (WHOOSH_TARGET_DB if sfx_id in WHOOSH_IDS else TARGET_DB)
+        gain_db = music_in_band + target - effect_in_band
         # Cap the 2-8 kHz lift so ticks never spike.
         music_hf = peak_db(sosfilt(hf_band, window))
         effect_hf = peak_db(sosfilt(hf_band, effect.mean(1))) + gain_db
@@ -210,7 +211,8 @@ def main():
     subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', picture, '-i', str(master),
                     '-af', f'alimiter=limit={10 ** (TRUE_PEAK_CEILING_DB / 20)}:attack=5:release=60:level=disabled',
                     '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '256k', '-shortest', output], check=True)
-    (ROOT / 'build/mix-report.txt').write_text('\n'.join(report) + '\n')
+    if report:
+        (ROOT / 'build/mix-report.txt').write_text('\n'.join(report) + '\n')
     print('\n'.join(report))
     print('wrote', output)
 

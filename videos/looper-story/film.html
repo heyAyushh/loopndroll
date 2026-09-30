@@ -69,7 +69,7 @@
   .bubble { padding: 18px 30px; border-radius: 30px 30px 8px 30px; font: 500 32px var(--display); white-space: nowrap;
     background: oklch(30% 0.05 292 / 0.9); border: 1px solid oklch(76% 0.14 292 / 0.35); color: var(--ink); box-shadow: 0 18px 50px oklch(0% 0 0 / 0.4); }
   .bubble small { display: block; font: 500 18px var(--display); color: oklch(78% 0.04 292); margin-top: 4px; text-align: right; }
-  #counter { font: 700 220px/1 var(--mono); letter-spacing: -0.04em; color: var(--ink); }
+  #counter { text-align: center; font: 700 220px/1 var(--mono); letter-spacing: -0.04em; color: var(--ink); }
   #counter small { display: block; font: 500 30px var(--display); letter-spacing: 0; color: var(--muted); margin-top: 8px; }
 
   /* Loop ring and stations. */
@@ -189,7 +189,7 @@
     <div id="stationLeft" class="abs station">Agent keeps working</div>
     <div id="centerCount" class="abs"><div class="num" id="countNum">14</div><div class="cap" id="countCap">tests failing</div></div>
 
-    <div id="pill" class="abs pill stop" style="transform-origin:center"><i></i>Session stopped</div>
+    <div id="pill" class="abs pill stop" style="transform-origin:center;z-index:5"><i></i>Session stopped</div>
 
     <div id="picker" class="abs">
       <div class="h">Session mode</div>
@@ -267,7 +267,7 @@ const FINALE_HERO = [BEAT.finale + 3.2, BEAT.finale + 4.9];   // the checks-pass
 const LAP_SECONDS = onBeat(2);
 const LAP_COUNT = 4;
 const FAILING_PER_LAP = [14, 9, 3, 0];
-const RING = { cx: 960, cy: 540, radiusSmall: 230, radiusLarge: 320 };
+const RING = { cx: 960, cy: 540, radiusSmall: 230, radiusLarge: 300 };
 const TERMINAL_HOME = { x: 960, y: 590, s: 1 };
 const DEBATE_FRAME = [960, 630, 1.0];
 const END_ORB_Y = 250;
@@ -351,7 +351,7 @@ const OPENING_LINES = [
   { at: 2.6, html: '<span class="dim">    src/auth/refresh.ts   </span><span class="ok">+61</span> <span class="bad">−120</span>' },
 ];
 const CATALYST_LINES = [
-  { at: -1, html: '<span class="dim">› keep going </span><span class="bad">×23</span>' },
+  { at: -1, html: '<span class="dim">› keep going </span><span class="bad" id="dockTarget">×23</span>' },
   { at: BEAT.catalyst + 0.3, html: '<span class="ok">✓ All done! The refactor is complete.</span>' },
   { at: BEAT.catalyst + 0.6, html: '<span class="pill stop" id="termPill" style="height:42px;font-size:22px"><i></i>Session stopped</span>' },
   { at: BEAT.catalyst + 0.85, html: '<span class="you"><span class="chev">$</span> pnpm test</span>' },
@@ -384,8 +384,7 @@ function renderTerminalBody(t) {
   lines.forEach((l, i) => {
     const k = easeOut(prog(t, l.at, l.at + 0.3));
     const themeDim = name === 'opening' && i > 0 ? 1 - 0.85 * easeOut(prog(t, BEAT.theme + 0.2, BEAT.theme + 0.8)) : 1;
-    const heroDim = name === 'finale' ? 1 - 0.7 * win(t, FINALE_HERO[0], FINALE_HERO[1], 0.3, 0.4) : 1;
-    nodes[i].style.opacity = k * themeDim * heroDim;
+    nodes[i].style.opacity = k * themeDim;
     const chars = nodes[i].textContent.length;
     const reveal = l.at < 0 ? 1 : prog(t, l.at, l.at + chars / TYPE_CHARS_PER_SECOND);
     nodes[i].style.clipPath = reveal < 1 ? `inset(-10px ${100 - reveal * 100}% -10px 0)` : '';
@@ -427,13 +426,13 @@ function terminal(t) {
   const phraseCentre = lineX((29 + 46) / 2);
   const themeFocus = [960 - THEME_SCALE * phraseCentre, 470 - THEME_SCALE * lineY(0), THEME_SCALE];
   const [x, y, s] = kf(t, [
-    [0, [960, 590, 1]], [BEAT.theme - 0.6, [960, 586, 1.05]], [BEAT.theme, [960, 560, 1.18]], [BEAT.theme + 1.2, themeFocus],
+    [0, [990, 600, 0.97]], [BEAT.theme - 0.6, [960, 586, 1.05]], [BEAT.theme, [960, 560, 1.18]], [BEAT.theme + 1.2, themeFocus],
     [BEAT.setup, [themeFocus[0], themeFocus[1] - 30, THEME_SCALE * 1.04]],
     // Foreground fly-through: the prompt scales past the camera while the first bubble waits underneath.
     [BEAT.setup + 0.35, [themeFocus[0] - 200, themeFocus[1] + 120, THEME_SCALE * 1.9]],
     [BEAT.setup + 0.36, [960, 590, 0.9]], [BEAT.catalyst + 0.2, [960, 590, 0.96]], [BEAT.impact, [960, 590, 1.0]],
     [BEAT.debate, DEBATE_FRAME], [BEAT.breakTwo, [DEBATE_FRAME[0], DEBATE_FRAME[1] + 10, DEBATE_FRAME[2] * 1.03]],
-    [TERM_ENTER_FINALE, [1420, 590, 0.74]], [BEAT.finale + 0.7, [1210, 590, 0.8]], [BEAT.finale + 2.2, [960, 600, 0.92]],
+    [TERM_ENTER_FINALE, [1420, 590, 0.74]], [BEAT.finale + 0.7, [1210, 590, 0.8]], [BEAT.finale + 2.2, [960, 600, 0.92]], [FINALE_HERO[0], [960, 606, 0.95]],
     [BEAT.finalImage, [960, 595, 0.97]], [BEAT.finalImage + 1.1, [960, 590, 1]], [BEAT.endCard, [960, 586, 1.03]],
     [BEAT.endCard + 0.9, [960, END_ORB_Y, 0.16]],
   ]);
@@ -441,9 +440,10 @@ function terminal(t) {
     1 - prog(t, BEAT.setup - 0.1, BEAT.setup + 0.15),
     t >= BEAT.setup ? win(t, BEAT.catalyst + 0.05, BEAT.impact + 0.15, 0.35, 0.15) : 0,
     win(t, BEAT.debate - 0.02, BEAT.breakTwo + 0.3, 0.02, 0.3),
-    t >= TERM_ENTER_FINALE ? win(t, TERM_ENTER_FINALE, BEAT.endCard + 0.7, 0.4, 0.35) : 0,
+    t >= TERM_ENTER_FINALE ? win(t, TERM_ENTER_FINALE, BEAT.endCard + 0.5, 0.4, 0.3) : 0,
   );
-  place(el, x, y, s, o);
+  const heroAway = 0.94 * win(t, FINALE_HERO[0] - 0.15, FINALE_HERO[1] - 0.1, 0.25, 0.35);
+  place(el, x, y, s * (1 - 0.06 * heroAway), o * (1 - heroAway));
   if (o > 0) {
     renderTerminalBody(t);
     $('inputText').textContent = inputText(t);
@@ -468,11 +468,13 @@ const GRID_ORDER = (() => {
   return cells.map(c => [c, centreDistance(c)]).sort((a, b) => a[1] - b[1]).map(([c]) => c);
 })();
 const COUNTER_HOME = [392, 560];
+const COUNTER_CHAR_CENTRE = 14.5;          // "×23" spans chars 13-15 of "› keep going ×23"
+const COUNTER_DOCK_SCALE = 36 / 220 * 0.96; // 220 px counter digits onto the 36 px terminal line
 const bubbleLayout = (() => {
   const rnd = seeded(7);
   return Array.from({ length: BUBBLE_COUNT }, (_, i) => {
     const span = BEAT.catalyst - BEAT.setup - 0.6;
-    const appear = i === 0 ? BEAT.setup - 0.25 : BEAT.setup + 0.1 + span * Math.pow(i / (BUBBLE_COUNT - 1), 0.5);
+    const appear = i === 0 ? BEAT.setup - 0.02 : BEAT.setup + 0.1 + span * Math.pow(i / (BUBBLE_COUNT - 1), 0.5);
     const cell = GRID_ORDER[i], col = cell % GRID_COLS, row = Math.floor(cell / GRID_COLS);
     const x = GRID_X0 + col * GRID_DX + (rnd() - 0.5) * 24;
     const y = GRID_Y0 + row * GRID_DY + (rnd() - 0.5) * 20;
@@ -500,18 +502,22 @@ function setup(t) {
     const heroDrift = i === 0 ? 50 * prog(t, BEAT.setup - 0.25, BEAT.setup + 0.7) : 0;
     const bx = lerp(1180 - heroDrift, b.x, heroK), by = lerp(560 - heroDrift * 0.4, b.y, heroK);
     const x = lerp(bx, COUNTER_HOME[0], collapse), y = lerp(by, COUNTER_HOME[1], collapse);
-    const o = Math.min(prog(t, b.appear, b.appear + 0.12), 1 - prog(t, BEAT.catalyst - 0.1, BEAT.catalyst + 0.05));
+    const o = Math.min(prog(t, b.appear, b.appear + 0.12), 1 - prog(t, BEAT.catalyst - 0.3, BEAT.catalyst - 0.08));
     const scale = (0.7 + 0.3 * k) * lerp(1.7, BUBBLE_SCALE, heroK);
-    place(bubbleEls[i], x, y, lerp(scale, 0.2, collapse), o, b.rot * (1 - collapse));
+    place(bubbleEls[i], x, y, lerp(scale, 0.05, collapse), o, b.rot * (1 - collapse));
   });
   const count = bubbleLayout.filter(b => t >= b.appear).length;
   $('counter').firstChild.textContent = `×${Math.max(1, count)}`;
   const dock = smoother(prog(t, BEAT.catalyst, BEAT.catalyst + 0.45));
-  const dockAt = [960 + 0.93 * lineX(15), 590 + 0.93 * lineY(0)];
+  const DOCK_SCALE = 0.96;   // terminal scale when the counter lands
+  const dockAt = [960 + DOCK_SCALE * lineX(COUNTER_CHAR_CENTRE), 590 + DOCK_SCALE * lineY(0)];
   const co = Math.min(prog(t, BEAT.setup, BEAT.setup + 0.3), 1 - prog(t, BEAT.catalyst + 0.3, BEAT.catalyst + 0.5));
   const grow = 1 + 0.06 * easeOut(prog(t, BEAT.setup + 2, BEAT.catalyst));
   place($('counter'), lerp(COUNTER_HOME[0] + 12 * prog(t, BEAT.setup, BEAT.catalyst), dockAt[0], dock),
-    lerp(COUNTER_HOME[1], dockAt[1], dock), lerp(grow, 0.16, dock), co);
+    lerp(COUNTER_HOME[1], dockAt[1], dock), lerp(grow, COUNTER_DOCK_SCALE, dock), co);
+  $('counter').querySelector('small').style.opacity = 1 - prog(t, BEAT.catalyst - 0.2, BEAT.catalyst + 0.1);
+  const dockTarget = $('dockTarget');
+  if (dockTarget) dockTarget.style.visibility = t < BEAT.catalyst + 0.4 ? 'hidden' : '';
 
   // Catalyst to impact: the terminal's own "14 failed" grows into the giant headline.
   const carry = easeOut(prog(t, BEAT.impact, BEAT.impact + 0.4));
@@ -623,7 +629,7 @@ function stations(t, rs) {
   const pad = 110;   // orb radius + breathing room, so the orb never covers a label
   for (const [id, dx, dy, idx] of spots) {
     const el = $(id);
-    const px = rs.cx + dx * (rs.r + pad + (dx ? 130 : 0)), py = rs.cy + dy * (rs.r + pad - 30);
+    const px = rs.cx + dx * (rs.r + pad + (dx ? 170 : 0)), py = rs.cy + dy * (rs.r + pad + 10);
     // Station lights for 0.5s after the orb passes it.
     const stationAngle = -Math.PI / 2 + idx * Math.PI / 2;
     const since = ((a - stationAngle) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
@@ -654,6 +660,8 @@ function breakTwo(t) {
   const k = smoother(prog(t, BEAT.breakTwo, BEAT.breakTwo + 0.9));
   const x = lerp(inTerm[0], ringTop[0], k), y = lerp(inTerm[1], ringTop[1], k) - 60 * Math.sin(Math.PI * k);
   const squeeze = smoother(prog(t, BEAT.breakTwo + 1.0, BEAT.breakTwo + 1.35));
+  const termPill = $('termPill');
+  if (termPill) termPill.style.visibility = t >= BEAT.breakTwo ? 'hidden' : '';
   const pill = $('pill');
   pill.style.background = ''; pill.style.color = '';
   const o = Math.min(prog(t, BEAT.breakTwo - 0.05, BEAT.breakTwo + 0.05), 1 - prog(t, BEAT.breakTwo + 1.25, BEAT.breakTwo + 1.4));
@@ -690,16 +698,17 @@ function checkTiles(t) {
   const inFinale = t >= FINALE_HERO[0] - 0.2;
   const [a, b] = inFinale ? FINALE_HERO : [BEAT.midpoint, BEAT.badGuys + 0.45];
   const o = win(t, a, b, 0.05, inFinale ? 0.4 : 0.1);
-  const push = 1 + 0.07 * prog(t, a, b);
+  const push = 1 + 0.12 * prog(t, a, b);
+  const pan = inFinale ? 0 : -70 * prog(t, a, b);   // slow lateral drift keeps the reading hold alive
   $('tilesHead').textContent = inFinale ? 'All checks pass.' : 'Every check. Not just tests.';
   $('tilesHead').style.color = inFinale ? 'var(--pass)' : '';
   place($('tilesHead'), 960, inFinale ? 225 : 250, push, Math.min(o, prog(t, a + 0.1, a + 0.4), inFinale ? 1 : 1 - prog(t, BEAT.badGuys - 0.3, BEAT.badGuys - 0.05)));
-  const tileAt = [a, a + 0.12, a + 0.24];
+  const tileAt = inFinale ? [a, a + 0.12, a + 0.24] : [a, a + 0.35, a + 0.47];
   // Exit of the midpoint: tiles shrink into the question card's check chips.
   const toChips = inFinale ? 0 : smoother(prog(t, BEAT.badGuys - 0.25, BEAT.badGuys + 0.2));
   [0, 1, 2].forEach(i => {
     const k = easeOutBack(prog(t, tileAt[i], tileAt[i] + 0.35));
-    let x = TILE_SLOTS[i] * push + 960 * (1 - push), y = 620, sc = lerp(0.85, 1, k);
+    let x = TILE_SLOTS[i] * push + 960 * (1 - push) + pan, y = 620, sc = lerp(0.85, 1, k);
     if (!inFinale && i === 0) {           // the ring's green 0 is carried into the first tile
       const carry = smoother(prog(t, a, a + 0.45));
       x = lerp(960, x, carry); y = lerp(530, y, carry); sc = lerp(0.55, 1, carry);
@@ -814,7 +823,7 @@ function miniPhone(t) {
 
 // ---------- Captions: big type that carries the theme ----------
 const CAPTIONS = [
-  { a: BEAT.theme + 0.9, b: BEAT.setup + 0.1, text: 'Done should mean done.', x: 960, y: 870 },
+  { a: BEAT.theme + 0.9, b: BEAT.setup - 0.02, text: 'Done should mean done.', x: 960, y: 870 },
   { a: BEAT.allLost + 0.4, b: BEAT.darkNight + 0.05, text: 'Stopped. With a question.', x: 960, y: 920 },
   { a: BEAT.darkNight - 0.05, b: BEAT.breakThree + 0.2, html: 'It needs you.<span class="caret bigcaret"></span>', x: 960, y: 540, bare: true, push: 0.12, exitRise: 160 },
   { a: BEAT.breakThree + 0.7, b: TERM_ENTER_FINALE + 0.1, html: 'Answer from<br>anywhere.', x: 1330, y: 540, bare: true, size: 130, left: 960, exitRise: 60 },
