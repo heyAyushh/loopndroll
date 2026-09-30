@@ -63,7 +63,7 @@ PLAN = [
     ('2356', B(12) + 0.6, 0, None, 'Session stopped pill'),
     ('1492', B(14) - 0.35, 0, 0.6, 'the fail line grows into "14 failed"'),
     ('1392', B(16) + 0.15, 1.0, 0.5, 'typing "keep go"'),
-    ('1492', B(18) - 0.3, 0, 0.6, 'the orb rolls in'),
+    ('1492', B(18) + 0.15, 0, 0.6, 'the orb rolls in'),
     ('2568', B(18) + 1.95, 0, None, 'picker lands on Completion Checks'),
     *[('2356', LAP_START + LAP / 4 + k * LAP, 0, None, f'checks run, lap {k + 1}') for k in range(4)],
     ('1110', B(30), 0, None, 'tiles land'),
