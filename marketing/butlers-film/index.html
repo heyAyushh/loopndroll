@@ -1,0 +1,20 @@
+<!doctype html>
+<!-- The Butlers Who Would Not Proceed. Open with ?w=1920&h=1080 or ?w=1080&h=1920.
+     Every pixel is a pure function of window.seek(t); nothing free-runs. -->
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="film.css">
+</head>
+<body>
+<div id="stage"></div>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <filter id="whip-blur" x="-20%" y="-5%" width="140%" height="110%">
+      <feGaussianBlur id="whip-blur-amount" stdDeviation="0 0"/>
+    </filter>
+  </defs>
+</svg>
+<script src="film.js"></script>
+</body>
+</html>

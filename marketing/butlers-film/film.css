@@ -1,0 +1,49 @@
+html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+#stage { position: relative; overflow: hidden; background: #EBA9A6; font-family: Futura, "Futura PT", "Avenir Next", sans-serif; }
+.layer { position: absolute; inset: 0; overflow: hidden; will-change: transform; }
+.layer svg { position: absolute; inset: 0; }
+.hidden { visibility: hidden; }
+
+/* Title and end cards */
+.card-frame { position: absolute; border: 6px double #7C2935; box-sizing: border-box; }
+.card-inner { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #6E2230; }
+.eyebrow { letter-spacing: 0.32em; text-transform: uppercase; font-weight: 500; }
+.title-main { font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; line-height: 1.08; }
+.title-sub { font-family: Didot, "Bodoni 72", serif; font-style: italic; }
+
+/* Chapter overlay */
+#chapter { position: absolute; left: 0; right: 0; text-align: center; color: #FFF6DA; text-shadow: 0 3px 0 rgba(90, 20, 35, 0.55); pointer-events: none; }
+#chapter .chapter-number { letter-spacing: 0.4em; font-weight: 700; }
+#chapter .chapter-name { font-weight: 700; letter-spacing: 0.04em; }
+
+/* Subtitles */
+#subtitle { position: absolute; left: 0; right: 0; display: flex; justify-content: center; pointer-events: none; }
+#subtitle span { background: rgba(38, 18, 30, 0.72); color: #FFF4CF; font-weight: 500; letter-spacing: 0.02em; border-radius: 10px; text-align: center; }
+#subtitle span.silent { font-style: italic; color: #E8E0FF; }
+
+/* Diagram */
+.paper { position: absolute; inset: 0; background: #F6EFDD; }
+.diagram-border { position: absolute; border: 3px solid #2B3F5C; box-sizing: border-box; }
+.diagram-border::after { content: ""; position: absolute; inset: 8px; border: 1px solid #2B3F5C; }
+.diagram-head { position: absolute; left: 0; right: 0; text-align: center; color: #2B3F5C; font-weight: 700; letter-spacing: 0.3em; }
+.fig { position: absolute; left: 0; top: 0; }
+.fig-caption { position: absolute; left: 0; right: 0; text-align: center; color: #2B3F5C; font-family: Didot, serif; font-style: italic; }
+.fig-caption b { font-family: Futura, sans-serif; font-style: normal; letter-spacing: 0.18em; font-weight: 700; display: block; }
+
+/* Phone close-up */
+.notif { position: absolute; left: 4%; right: 4%; background: rgba(250, 247, 240, 0.9); border-radius: 26px; box-shadow: 0 8px 24px rgba(40, 30, 50, 0.18); color: #1B1B1F; font-family: -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif; overflow: hidden; }
+.notif-row { display: flex; align-items: center; }
+.notif-icon { border-radius: 22%; background: #fff; object-fit: cover; }
+.notif-app { font-weight: 600; letter-spacing: 0.02em; color: #55555c; text-transform: uppercase; }
+.notif-title { font-weight: 700; }
+.notif-body { color: #26262b; }
+.notif-actions { display: flex; border-top: 1px solid rgba(0, 0, 0, 0.1); }
+.notif-actions div { flex: 1; text-align: center; color: #1F63D6; font-weight: 600; }
+.notif-actions div + div { border-left: 1px solid rgba(0, 0, 0, 0.1); }
+.notif-actions div.pressed { background: rgba(31, 99, 214, 0.16); }
+.notif-replied { color: #2E7D4F; font-weight: 600; }
+.status-line { font-weight: 500; letter-spacing: 0.08em; color: #6E2230; text-transform: uppercase; }
+
+/* End card */
+.end-line { color: #5E1E2A; }
+.end-url { font-weight: 700; letter-spacing: 0.04em; color: #8C2E3B; }
