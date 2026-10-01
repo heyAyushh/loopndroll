@@ -18,8 +18,9 @@ html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
 
 /* Subtitles */
 #subtitle { position: absolute; left: 0; right: 0; display: flex; justify-content: center; pointer-events: none; }
-#subtitle span { background: rgba(38, 18, 30, 0.72); color: #FFF4CF; font-weight: 500; letter-spacing: 0.02em; border-radius: 10px; text-align: center; }
-#subtitle span.silent { font-style: italic; color: #E8E0FF; }
+/* silent-film intertitle plaque */
+#subtitle span { background: #FFF6E6; color: #5E1E2A; font-weight: 500; letter-spacing: 0.02em; border: 5px double #8C2E3B; border-radius: 6px; text-align: center; box-shadow: 0 6px 18px rgba(60, 10, 25, 0.25); }
+#subtitle span.silent { font-style: italic; color: #6E3B5E; }
 
 /* Diagram */
 .paper { position: absolute; inset: 0; background: #F6EFDD; }

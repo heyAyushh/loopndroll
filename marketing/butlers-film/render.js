@@ -19,6 +19,14 @@ async function openFilm(width, height) {
   return { browser, page };
 }
 
+/** A busy machine can stall one screenshot; wait longer and retry instead of losing the whole render. */
+async function screenshotWithRetry(page, attempts = 3) {
+  for (let i = 1; ; i++) {
+    try { return await page.screenshot({ type: 'png', timeout: 180000 }); }
+    catch (error) { if (i >= attempts) throw error; console.error(`screenshot retry ${i}: ${error.message.split('\n')[0]}`); }
+  }
+}
+
 async function renderVideo(width, height, fps, out, start, end) {
   const { browser, page } = await openFilm(width, height);
   const duration = await page.evaluate(() => window.FILM.DURATION);
@@ -29,7 +37,7 @@ async function renderVideo(width, height, fps, out, start, end) {
   const began = Date.now();
   for (let frame = first; frame < last; frame++) {
     await page.evaluate(t => window.seek(t), frame / fps);
-    const png = await page.screenshot({ type: 'png' });
+    const png = await screenshotWithRetry(page);
     if (!ffmpeg.stdin.write(png)) await new Promise(r => ffmpeg.stdin.once('drain', r));
     if (frame % (fps * 5) === 0) console.log(`${out}: ${(frame / fps).toFixed(1)}s  (${((Date.now() - began) / 1000).toFixed(0)}s elapsed)`);
   }

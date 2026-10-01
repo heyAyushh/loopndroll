@@ -122,7 +122,7 @@ function gaitPose(phase, run = false) {
   pose.drop = LEG_LENGTH - Math.max(extent(pose.legL), extent(pose.legR)) - (run ? 14 * Math.abs(Math.sin(phase * 2)) : 0);
   return pose;
 }
-const GAIT_CYCLE = { walk: 2 * 2 * LEG_LENGTH * Math.sin(24 * DEG), run: 1.35 * 2 * 2 * LEG_LENGTH * Math.sin(40 * DEG) };
+const GAIT_CYCLE = { walk: 2 * 2 * LEG_LENGTH * Math.sin(24 * DEG), run: 0.75 * 2 * 2 * LEG_LENGTH * Math.sin(40 * DEG) };
 /** Gait phase for a distance walked, in person units. */
 const gaitPhase = (distance, run = false) => (distance / (run ? GAIT_CYCLE.run : GAIT_CYCLE.walk)) * 2 * Math.PI;
 
@@ -152,6 +152,8 @@ function applyPose(id, view, pose, { blink = 0, breathe = 0, bow = 0 } = {}) {
   [['armL', alx, pose.armL], ['armR', arx, pose.armR]].forEach(([name, x, [shoulder, elbow, foreshorten]]) => {
     setAttr(`${pre}-${name}`, 'transform', `rotate(${shoulder},${x},${RIG.shoulderY})`);
     setAttr(`${pre}-${name}-elbow`, 'transform', `rotate(${elbow},${x},${RIG.elbowY}) translate(${x},${RIG.elbowY}) scale(1,${foreshorten ?? 1}) translate(${-x},${-RIG.elbowY})`);
+    // props (tray, coconut, phone) stay upright however the arm is turned
+    setAttr(`${pre}-${name}-prop`, 'transform', `translate(${x},${RIG.wristY + 8}) scale(1,${1 / (foreshorten ?? 1)}) rotate(${-(shoulder + elbow)})`);
   });
   const breath = 1 + Math.sin(breathe * Math.PI * 2) * 0.006;
   const fold = view === 'front' ? `translate(0,${RIG.hipY}) scale(1,${(1 - bow * 0.0085) * breath}) translate(0,${-RIG.hipY})` : `translate(0,${RIG.hipY}) scale(1,${breath}) translate(0,${-RIG.hipY})`;

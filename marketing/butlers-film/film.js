@@ -69,13 +69,13 @@ const SUBTITLES = [
   [22.4, 26.0, 'They would not proceed without permission.'],
   [26.5, 28.4, 'One of them had a question.'],
   [32.3, 35.8, 'On the fourth day, a friend returned from the beach.'],
-  [36.4, 37.5, 'You’re still here?'],
-  [38.0, 39.7, 'They won’t proceed without permission.', 'silent'],
-  [40.4, 42.7, 'Get Looper. It’s an app on your Mac.'],
-  [43.2, 45.2, 'It checks whether they’re really done.'],
-  [45.9, 48.5, 'Tests fail? It sends them back to work.'],
-  [48.8, 51.6, 'Real questions come to your phone. Anywhere.'],
-  [56.2, 57.2, 'Spaces.'], [57.5, 58.8, 'Absolutely not.'],
+  [36.2, 37.8, '“You’re still here?”'],
+  [37.9, 39.6, '“They won’t proceed without permission.”', 'silent'],
+  [40.4, 42.7, '“Get Looper. It’s an app on your Mac.”'],
+  [43.2, 45.2, '“It checks whether they’re really done.”'],
+  [45.9, 48.5, '“Tests fail? It sends them back to work.”'],
+  [48.8, 51.6, '“Real questions come to your phone. Anywhere.”'],
+  [56.1, 57.3, '“Spaces.”'], [57.4, 58.8, '“Absolutely not.”'],
   [60.9, 62.4, 'The developer stood up.'],
   [64.6, 67.9, 'It was, by all accounts, a lovely day.'],
 ];
@@ -440,6 +440,8 @@ function applyButlers(t) {
 const FRIEND_PATH = timedPath(32.2, 400, [[800, 800], [600, 660], [400, 460], [-360, 440], [MARKS.friend.X, MARKS.friend.Z]]);
 const FRIEND_REST = { armL: [10, -46, 1], armR: [-4, -10, 1] };
 const FRIEND_RAISED = { armL: [10, -46, 1], armR: [-160, -22, 1] };
+const FRIEND_SIP = [30, -153, 1];   // solved: coconut just below-left of the mouth, straw tip at the lips
+const SIP_WINDOW = [38.2, 38.5, 38.75, 39.05];   // up, hold, down
 function friendFrame(t) {
   const pos = followPath(t, FRIEND_PATH);
   const blink = [36.9, 44.0, 57.0].some(at => Math.abs(t - at) < 0.08) ? 1 : 0;
@@ -448,7 +450,8 @@ function friendFrame(t) {
     return { X: pos.X, Z: pos.Z, view: 'side', facing: -1, pose, extra: {}, clip: pos.X > ROOM.wallX - 10 };
   }
   const raise = t < 58.9 ? Math.max(EASE.inout(progress(t, 39.1, 39.7)), t > 51 ? 1 : 0) : 0;
-  const pose = { ...STAND, armL: FRIEND_REST.armL, armR: FRIEND_REST.armR.map((v, i) => lerp(v, FRIEND_RAISED.armR[i], raise)) };
+  const sip = Math.min(EASE.inout(progress(t, SIP_WINDOW[0], SIP_WINDOW[1])), 1 - EASE.inout(progress(t, SIP_WINDOW[2], SIP_WINDOW[3])));
+  const pose = { ...STAND, armL: FRIEND_REST.armL.map((v, i) => lerp(v, FRIEND_SIP[i], sip)), armR: FRIEND_REST.armR.map((v, i) => lerp(v, FRIEND_RAISED.armR[i], raise)) };
   return { X: pos.X, Z: pos.Z, view: 'front', facing: 1, pose, extra: { blink, breathe: t / 3.4 }, clip: false };
 }
 /** Screen position of the friend's raised phone (anchor for the flying cards and the zoom into the phone). */
@@ -488,6 +491,12 @@ function devFrame(t) {
   const pos = followPath(t, running ? DEV_RUN : DEV_WALK);
   const walked = running ? Math.hypot(400 - MARKS.dev.X, 660 - MARKS.dev.Z) + pos.distance : pos.distance;
   const pose = gaitPose(gaitPhase(walked / PERSON_WORLD, running), running);
+  // Chaplin heel-click at the doorway: a hop with both heels kicked together
+  const click = progress(t, 62.8, 63.04);
+  if (click > 0 && click < 1) {
+    const hop = Math.sin(Math.PI * click);
+    Object.assign(pose, { legL: [30 * hop, 70 * hop], legR: [30 * hop, 70 * hop], armL: [-150 * hop, -10, 1], armR: [-130 * hop, -10, 1], drop: -70 * hop, lean: -6 * hop });
+  }
   return { X: pos.X, Z: pos.Z, view: 'side', facing: 1, pose, extra: {}, look: 0, clip: pos.X > ROOM.wallX - 10 };
 }
 function applyDeveloper(t) {
@@ -788,7 +797,7 @@ function applyLayers(t) {
   if (t > 67.7 && t < 68.5) {
     const p = EASE.in(progress(t, 67.7, 68.45));
     const r = lerp(Math.hypot(W, H) * 0.6, 0, p);
-    iris.style.background = `radial-gradient(circle at 50% ${PORTRAIT ? 62 : 62}%, transparent ${r}px, #F4C7C3 ${r + 1}px)`;
+    iris.style.background = `radial-gradient(circle at 50% ${PORTRAIT ? 62 : 62}%, transparent ${r}px, #0B0A09 ${r + 1}px)`;   // silent-film iris closes to black
     iris.style.opacity = 1;
   } else iris.style.opacity = 0;
 }
@@ -806,5 +815,29 @@ window.seek = function seek(t) {
   applyChapter(t);
   applySubtitle(t);
 };
-window.FILM = { W, H, DURATION, VOICE_CUES };
+/** Foot plants from the same paths and gait phases the picture uses: [{ t, who, kind }]. */
+function footstepEvents() {
+  const events = [], last = {}, step = 1 / 240;
+  const record = (who, phase, t, kind) => {
+    const plant = Math.floor(phase / Math.PI);
+    if (last[who] !== undefined && plant > last[who]) events.push({ t: +t.toFixed(3), who, kind });
+    last[who] = plant;
+  };
+  for (let t = 31; t < 64; t += step) {
+    const friend = followPath(t, FRIEND_PATH);
+    if (friend.moving) record('friend', gaitPhase(friend.distance / PERSON_WORLD), t, 'soft');
+    BUTLERS.forEach(b => {
+      const path = butlerExitPath(b.id);
+      if (t > path.t0 && t < path.t3) record(b.id, gaitPhase(followPath(t, path.points).distance / PERSON_WORLD), t, 'heels');
+    });
+    if (t >= 61.62 && t < 63.35) {
+      const running = t >= 62.35;
+      const pos = followPath(t, running ? DEV_RUN : DEV_WALK);
+      const walked = running ? Math.hypot(400 - MARKS.dev.X, 660 - MARKS.dev.Z) + pos.distance : pos.distance;
+      record('dev', gaitPhase(walked / PERSON_WORLD, running), t, running ? 'run' : 'soft');
+    }
+  }
+  return events;
+}
+window.FILM = { W, H, DURATION, VOICE_CUES, footstepEvents };
 window.filmReady = Promise.all([document.fonts.ready, ...[...document.images].map(img => img.decode().catch(() => null))]).then(() => { window.seek(0); return true; });

@@ -31,9 +31,10 @@ for name, sfx_id in SFX.items():
         path.write_bytes(urllib.request.urlopen(request).read())
     print(name, path.stat().st_size)
 
-MUSIC = OUT.parent / "music" / "secret-garden.mp3"   # "Secret Garden", Eugenio Mininni, Mixkit Stock Music Free License
+# Scott Joplin, "The Cascades" and other 1904 rags on player-piano rolls; Internet Archive "1904Soundtrack", Public Domain Mark
+MUSIC = OUT.parent / "music" / "ragtime-1904.mp3"
 MUSIC.parent.mkdir(parents=True, exist_ok=True)
 if not MUSIC.exists():
-    request = urllib.request.Request("https://assets.mixkit.co/music/595/595.mp3", headers={"User-Agent": "Mozilla/5.0"})
+    request = urllib.request.Request("https://archive.org/download/1904Soundtrack/1904%20Soundtrack.mp3", headers={"User-Agent": "Mozilla/5.0"})
     MUSIC.write_bytes(urllib.request.urlopen(request).read())
 print("music", MUSIC.stat().st_size)
