@@ -80,7 +80,7 @@ function storyAt(t) {
   // silent-film title card for the opening
   const titleStyle = document.createElement('style');
   titleStyle.textContent = `#title-card{background:#0E0D0C !important}#title-card .card-frame{border-color:${ink} !important}#title-card .card-inner{color:${ink} !important}
-    #title-card .title-main{font-family:Baskerville,'Didot',serif;letter-spacing:0.08em}#title-card div[style*="background:#7C2935"]{background:${ink} !important}`;
+    #title-card .title-main{font-family:Baskerville,'Didot',serif;letter-spacing:0.08em${PORTRAIT ? `;font-size:${px(78)} !important` : ''}}#title-card div[style*="background:#7C2935"]{background:${ink} !important}`;
   document.head.appendChild(titleStyle);
 
   // film damage overlay (never filtered, sits on top of the print)
